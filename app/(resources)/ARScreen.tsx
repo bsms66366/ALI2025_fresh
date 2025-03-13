@@ -28,18 +28,23 @@ export default function ARScreen() {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
+  
+  // State for toggling labels
+  const [showLabels, setShowLabels] = useState(false);
+  // Ref to store label objects
+  const labelsRef = useRef<THREE.Object3D[]>([]);
 
   // Anatomical colors and labels mapping
   const anatomicalParts = [
-    { name: 'Vocalis Muscle', color: '#8B0000' },
-    { name: 'Lateral Cricoarytenoid Muscle', color: '#A52A2A' },
-    { name: 'Posterior Cricoarytenoid Muscle', color: '#CD5C5C' },
-    { name: 'Thyroid Cartilage', color: '#E8E8E8' },
-    { name: 'Cricoid Cartilage', color: '#DCDCDC' },
-    { name: 'Arytenoid Cartilages', color: '#D3D3D3' },
-    { name: 'Cricothyroid Ligament', color: '#FFE4B5' },
-    { name: 'Vocal Ligament', color: '#DEB887' },
-    { name: 'Mucosa', color: '#FFB6C1' },
+    { name: 'Vocalis Muscle', color: '#8B0000', position: [0.5, 0.2, 0.3] },
+    { name: 'Lateral Cricoarytenoid Muscle', color: '#A52A2A', position: [0.7, 0.1, 0.2] },
+    { name: 'Posterior Cricoarytenoid Muscle', color: '#CD5C5C', position: [-0.5, 0.1, 0.3] },
+    { name: 'Thyroid Cartilage', color: '#E8E8E8', position: [0, 0.4, 0.5] },
+    { name: 'Cricoid Cartilage', color: '#DCDCDC', position: [0, -0.3, 0.4] },
+    { name: 'Arytenoid Cartilages', color: '#D3D3D3', position: [0, 0, 0.6] },
+    { name: 'Cricothyroid Ligament', color: '#FFE4B5', position: [0.3, -0.1, 0.4] },
+    { name: 'Vocal Ligament', color: '#DEB887', position: [0.2, 0.1, 0.3] },
+    { name: 'Mucosa', color: '#FFB6C1', position: [0, 0.2, 0.5] },
   ];
 
   const getAnatomicalColor = (meshName: string, index: number): string => {
@@ -54,9 +59,60 @@ export default function ARScreen() {
       colorIndex = Math.floor(objectNum / 2) % anatomicalParts.length;
     }
     
-    const part = anatomicalParts[colorIndex] || { name: 'Unknown', color: '#F0F0F0' };
+    const part = anatomicalParts[colorIndex] || { name: 'Unknown', color: '#F0F0F0', position: [0, 0, 0] };
     console.log('[Debug] Using color index', colorIndex, ':', part.name, part.color);
     return part.color;
+  };
+
+  // Function to create 3D text labels
+  const createLabel = (text: string, position: [number, number, number], color: string): THREE.Object3D => {
+    // Create a group to hold the text and any background/line
+    const labelGroup = new THREE.Group();
+    
+    // Instead of using TextGeometry which requires font loading,
+    // we'll use a simple sphere marker with a line
+    
+    // Add a small sphere to mark the label point
+    const sphereGeometry = new THREE.SphereGeometry(0.02, 8, 8);
+    const sphereMaterial = new THREE.MeshBasicMaterial({ color });
+    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+    sphere.position.set(position[0], position[1], position[2]);
+    
+    // Add line connecting the sphere to text position
+    const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(position[0], position[1], position[2]),
+      new THREE.Vector3(position[0] + 0.1, position[1] + 0.1, position[2])
+    ]);
+    const lineMaterial = new THREE.LineBasicMaterial({ color: '#ffffff' });
+    const line = new THREE.Line(lineGeometry, lineMaterial);
+    
+    // Add all elements to the group
+    labelGroup.add(sphere);
+    labelGroup.add(line);
+    
+    // Add name to the group for identification
+    labelGroup.name = text;
+    
+    return labelGroup;
+  };
+
+  // Function to toggle label visibility
+  const toggleLabels = () => {
+    setShowLabels(prev => {
+      const newState = !prev;
+      
+      // Show/hide labels based on new state
+      if (sceneRef.current) {
+        labelsRef.current.forEach(label => {
+          label.visible = newState;
+        });
+        
+        // Request render update
+        requestRender();
+      }
+      
+      return newState;
+    });
   };
 
   const loadModel = async () => {
@@ -349,6 +405,26 @@ export default function ARScreen() {
       };
       
       scene.add(model.scene);
+      
+      // Create and add labels for anatomical parts
+      // Clear any existing labels
+      labelsRef.current = [];
+      
+      // Create a parent object for all labels
+      const labelsGroup = new THREE.Group();
+      labelsGroup.name = "labelsGroup";
+      
+      // Create labels for each anatomical part
+      anatomicalParts.forEach((part, index) => {
+        const label = createLabel(part.name, part.position as [number, number, number], part.color);
+        label.visible = showLabels; // Initially set based on state
+        labelsGroup.add(label);
+        labelsRef.current.push(label);
+      });
+      
+      // Add labels group to the scene
+      scene.add(labelsGroup);
+      
     } catch (error) {
       console.error('Error loading model:', error);
       if (error instanceof Error) {
@@ -420,6 +496,17 @@ export default function ARScreen() {
       >
         <Text style={styles.resetButtonText}>Reset View</Text>
       </TouchableOpacity>
+      
+      {/* Toggle labels button */}
+      <TouchableOpacity 
+        style={styles.labelsButton} 
+        onPress={toggleLabels}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.buttonText}>
+          {showLabels ? 'Hide Labels' : 'Show Labels'}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -457,6 +544,22 @@ const styles = StyleSheet.create({
     borderColor: '#ffffff',
   },
   resetButtonText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  labelsButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ffffff',
+  },
+  buttonText: {
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 16,
