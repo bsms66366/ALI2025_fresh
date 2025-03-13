@@ -7,17 +7,21 @@ import * as THREE from 'three';
 import React, { useRef, useState } from 'react';
 
 // Update path to use assets inside the app directory
-const MODEL = Asset.fromModule(require('../assets/larynx_with_muscles_and_ligaments.glb'));
+const MODEL = Asset.fromModule(require('../assets/pharynx_and_floor_of_mouth.glb'));
 
 export default function ARScreen() {
   let timeout: number;
   // Declare model variable at component scope
   let model: GLTF | null = null;
   
-  // Ref for zoom level
+  // Add zoom reference for pinch-to-zoom
   const zoomRef = useRef({ scale: 0.05, lastDistance: 0 });
-  // Ref for rotation
+  // Ref for position with limits to prevent going off screen
+  const positionRef = useRef({ x: 0, y: 0 });
+  // Ref for rotation values
   const rotationRef = useRef({ x: 0, y: 0 });
+  // Track whether we're rotating or panning in single-finger mode
+  const gestureRef = useRef({ mode: 'none', initialTouchTime: 0 });
   
   // State for storing the GL instance
   const glRef = useRef<any>(null);
@@ -83,7 +87,7 @@ export default function ARScreen() {
     }
   };
 
-  // Function to calculate distance between two touches
+  // Function to calculate distance between two touches for pinch-to-zoom
   const getDistance = (touches: any[]): number => {
     if (touches.length < 2) return 0;
     
@@ -92,6 +96,36 @@ export default function ARScreen() {
     const dy = touch1.pageY - touch2.pageY;
     
     return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  // Function to normalize model size
+  const normalizeModel = (modelScene: THREE.Object3D) => {
+    // Calculate bounding box to determine model size
+    const box = new THREE.Box3().setFromObject(modelScene);
+    
+    // Get model dimensions
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    
+    // Target size (standard size we want all models to fit within)
+    const targetSize = 2.0;
+    
+    // Calculate scale to fit the model in our standard size
+    const normalizedScale = targetSize / maxDim;
+    
+    console.log(`Model normalized: original max dimension ${maxDim}, scale factor ${normalizedScale}`);
+    
+    // Update zoom reference scale
+    zoomRef.current.scale = normalizedScale;
+    
+    // Apply normalized scale
+    modelScene.scale.set(normalizedScale, normalizedScale, normalizedScale);
+    
+    // Center the model
+    const center = box.getCenter(new THREE.Vector3());
+    modelScene.position.sub(center);
+    
+    return normalizedScale;
   };
 
   // Create pan responder for handling touch gestures
@@ -105,10 +139,16 @@ export default function ARScreen() {
       // Initialize last distance for pinch zoom
       if (touches.length === 2) {
         zoomRef.current.lastDistance = getDistance(touches);
+      } 
+      // For single touch, track the start time to differentiate between short/long moves
+      else if (touches.length === 1) {
+        gestureRef.current = {
+          mode: 'none', // Will be determined on first move
+          initialTouchTime: Date.now()
+        };
       }
     },
     
-    // Handle touch movement
     onPanResponderMove: (evt: GestureResponderEvent, gestureState: PanResponderGestureState) => {
       const touches = evt.nativeEvent.touches;
       
@@ -119,11 +159,11 @@ export default function ARScreen() {
         // Calculate zoom change factor
         if (zoomRef.current.lastDistance > 0) {
           const distanceChange = currentDistance - zoomRef.current.lastDistance;
-          const scaleFactor = 1 + distanceChange * 0.001; // Adjust sensitivity
+          const scaleFactor = 1 + distanceChange * 0.001; // Subtle zoom sensitivity
           
-          // Update scale with constraints
+          // Update scale with constraints appropriate for normalized models
           const newScale = zoomRef.current.scale * scaleFactor;
-          zoomRef.current.scale = Math.max(0.01, Math.min(0.5, newScale)); // Limit scale between 0.01 and 0.5
+          zoomRef.current.scale = Math.max(0.2, Math.min(3.0, newScale)); // Updated constraints for normalized models
           
           // Apply scale to model
           if (model && model.scene) {
@@ -141,21 +181,66 @@ export default function ARScreen() {
         // Store current distance for next move
         zoomRef.current.lastDistance = currentDistance;
       }
-      // Handle rotation with one finger
+      // Handle single finger for both rotation and limited panning
       else if (touches.length === 1) {
-        // Update rotation based on finger movement with reduced sensitivity
-        rotationRef.current = {
-          y: rotationRef.current.y + gestureState.dx * 0.0003, // Reduced from 0.01 to 0.003
-          x: rotationRef.current.x + gestureState.dy * 0.0003, // Reduced from 0.01 to 0.003
-        };
+        const moveTime = Date.now() - gestureRef.current.initialTouchTime;
+        const moveMagnitude = Math.sqrt(
+          gestureState.dx * gestureState.dx + gestureState.dy * gestureState.dy
+        );
         
-        // Apply rotation to the model if it exists
-        if (model && model.scene) {
-          model.scene.rotation.y = rotationRef.current.y;
-          model.scene.rotation.x = rotationRef.current.x;
+        // If we haven't decided on a mode yet, determine based on movement
+        if (gestureRef.current.mode === 'none') {
+          // If movement is fast or diagonal, use rotation mode
+          if (moveTime < 150 || (Math.abs(gestureState.dx) > 5 && Math.abs(gestureState.dy) > 5)) {
+            gestureRef.current.mode = 'rotate';
+          } else {
+            // Otherwise use pan mode
+            gestureRef.current.mode = 'pan';
+          }
+        }
+        
+        // Apply the appropriate transformation based on mode
+        if (gestureRef.current.mode === 'rotate') {
+          // Update rotation based on finger movement with reduced sensitivity
+          rotationRef.current = {
+            y: rotationRef.current.y + gestureState.dx * 0.003,
+            x: rotationRef.current.x + gestureState.dy * 0.003,
+          };
           
-          // Request render update
-          requestRender();
+          // Apply rotation to the model if it exists
+          if (model && model.scene) {
+            model.scene.rotation.y = rotationRef.current.y;
+            model.scene.rotation.x = rotationRef.current.x;
+            
+            // Request render update
+            requestRender();
+          }
+        } else {
+          // Handle pan with limits to prevent going off screen
+          // Calculate new position with a reduced movement multiplier
+          const newPosX = positionRef.current.x + gestureState.dx * 0.001;
+          const newPosY = positionRef.current.y - gestureState.dy * 0.001; // Invert Y for natural movement
+          
+          // Apply position limits to keep model visible
+          const positionLimit = 1.5; // Limit based on normalized model size
+          positionRef.current = {
+            x: Math.max(-positionLimit, Math.min(positionLimit, newPosX)),
+            y: Math.max(-positionLimit, Math.min(positionLimit, newPosY)),
+          };
+          
+          // Apply position to the model if it exists
+          if (model && model.scene) {
+            // Get the current center position 
+            const box = new THREE.Box3().setFromObject(model.scene);
+            const center = box.getCenter(new THREE.Vector3());
+            
+            // Apply panning offset to the model
+            model.scene.position.x = positionRef.current.x - center.x;
+            model.scene.position.y = positionRef.current.y - center.y;
+            
+            // Request render update
+            requestRender();
+          }
         }
       }
     },
@@ -163,6 +248,7 @@ export default function ARScreen() {
     // Handle gesture end
     onPanResponderRelease: () => {
       zoomRef.current.lastDistance = 0;
+      gestureRef.current.mode = 'none';
     },
   });
 
@@ -252,23 +338,17 @@ export default function ARScreen() {
         }
       });
 
-      // Set initial scale - store in zoom ref
-      zoomRef.current.scale = 0.05;
-      model.scene.scale.set(
-        zoomRef.current.scale,
-        zoomRef.current.scale,
-        zoomRef.current.scale
-      );
+      // Apply normalization to ensure consistent size across models
+      // This replaces the manual scaling code
+      normalizeModel(model.scene);
       
-      // Center the model
-      const box = new THREE.Box3().setFromObject(model.scene);
-      const center = box.getCenter(new THREE.Vector3());
-      model.scene.position.sub(center); // Center the model
+      // Initialize position reference with the model's centered position
+      positionRef.current = {
+        x: model.scene.position.x,
+        y: model.scene.position.y
+      };
       
       scene.add(model.scene);
-      
-      // Log the total number of meshes found
-      console.log(`Total meshes with applied materials: ${meshIndex}`);
     } catch (error) {
       console.error('Error loading model:', error);
       if (error instanceof Error) {
