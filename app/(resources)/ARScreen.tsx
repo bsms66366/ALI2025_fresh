@@ -5,12 +5,8 @@ import { Asset } from 'expo-asset';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import * as THREE from 'three';
 
-// Define the model path relative to (resources)
-const MODEL_PATH = '../../assets/models/larynx.glb';
-
-// Create an asset reference
-const MODEL = Asset.fromModule(require(MODEL_PATH));
-console.log('Created asset reference:', MODEL);
+// Update path to use assets inside the app directory
+const MODEL = Asset.fromModule(require('../assets/larynx_with_muscles_and_ligaments.glb'));
 
 export default function ARScreen() {
   let timeout: number;
@@ -19,33 +15,26 @@ export default function ARScreen() {
     try {
       console.log('Starting model load...');
       
-      // Ensure the model is downloaded
-      if (!MODEL.downloaded) {
-        console.log('Downloading model...');
-        await MODEL.downloadAsync();
-        console.log('Model downloaded successfully');
-      }
+      // Ensure the model is downloaded and ready
+      await MODEL.downloadAsync();
+      console.log('Model downloaded successfully');
       
       if (!MODEL.localUri) {
         console.error('Model state:', MODEL);
         throw new Error('Model localUri is undefined after download');
       }
       
-      // Handle iOS file protocol
+      // Make sure we have the right format for iOS in Expo managed workflow
       const uri = Platform.OS === 'ios' 
         ? MODEL.localUri.startsWith('file://') 
           ? MODEL.localUri 
-          : `file://${MODEL.localUri}`
+          : `file://${MODEL.localUri}` 
         : MODEL.localUri;
       
-      console.log('Model URI:', uri);
+      console.log('Using model URI:', uri);
       return uri;
     } catch (error) {
       console.error('Error in loadModel:', error);
-      if (error instanceof Error) {
-        console.error('Error details:', error.message);
-        console.error('Error stack:', error.stack);
-      }
       throw error;
     }
   };
@@ -60,37 +49,48 @@ export default function ARScreen() {
     renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
 
     try {
-      // Use same path as in loadModel function
-      console.log('Starting model loading in context...');
       const modelURI = await loadModel();
       console.log('Model URI received:', modelURI);
       
       if (!modelURI) {
         throw new Error('Could not resolve model URI');
       }
-      console.log('Model URI validated');
 
       const loader = new GLTFLoader();
       
-      // Set cross-origin policy
-      loader.setCrossOrigin('anonymous');
+      // For debugging
+      loader.setPath('');
       
-      // Use arraybuffer manager
-      const manager = new THREE.LoadingManager();
-      loader.manager = manager;
-
+      // For Expo managed workflows, this approach works well
+      const response = await fetch(modelURI);
+      const blob = await response.blob();
+      const arrayBuffer = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      });
+      
       const model = await new Promise<GLTF>((resolve, reject) => {
-        loader.load(
-          modelURI,
+        loader.parse(
+          arrayBuffer as ArrayBuffer,
+          '',
           resolve,
-          (progress) => console.log('Loading progress:', (progress.loaded / progress.total * 100) + '%'),
           reject
         );
       });
 
-      // Adjust model position and scale as needed
-      model.scene.scale.set(0.5, 0.5, 0.5);
+      // Reduced scale significantly to make the model appear smaller
+      model.scene.scale.set(0.05, 0.05, 0.05);
+      
+      // Center the model
       model.scene.position.set(0, 0, 0);
+      
+      // Optional: you can add this to fit the model to the view
+      const box = new THREE.Box3().setFromObject(model.scene);
+      const center = box.getCenter(new THREE.Vector3());
+      model.scene.position.sub(center); // Center the model
+      
       scene.add(model.scene);
     } catch (error) {
       console.error('Error loading model:', error);
@@ -107,7 +107,8 @@ export default function ARScreen() {
     pointLight.position.set(5, 5, 5);
     scene.add(pointLight);
 
-    camera.position.z = 3;
+    // Increased camera distance to see the properly scaled model
+    camera.position.z = 5;
 
     const render = () => {
       timeout = requestAnimationFrame(render);

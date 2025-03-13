@@ -24,7 +24,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
-      }
+      },
+      "package": "com.cjtaylormade.ali2320"
     },
     "web": {
       "bundler": "metro",
@@ -44,7 +45,7 @@
       "typedRoutes": true
     },
     "assetBundlePatterns": [
-      "assets/models/*"
+      "**/*"
     ],
     "extra": {
       "router": {
@@ -54,5 +55,10 @@
         "projectId": "eb315645-7e25-4941-9ce8-1fa61d047b65"
       }
     }
+    /* "doctor": {
+      "reactNativeDirectoryCheck": {
+        "listUnknownPackages": false
+      } 
+    }*/
   }
 }
