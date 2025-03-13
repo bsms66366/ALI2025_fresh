@@ -186,7 +186,7 @@ export default function ARScreen() {
         
         // Apply the appropriate transformation based on mode
         if (gestureRef.current.mode === 'rotate') {
-          // Update rotation based on finger movement with moderate sensitivity
+          // Update rotation based on finger movement with reduced sensitivity
           rotationRef.current = {
             y: rotationRef.current.y + gestureState.dx * 0.003, // Reduced sensitivity from 0.01
             x: rotationRef.current.x + gestureState.dy * 0.003, // Reduced sensitivity from 0.01
@@ -208,7 +208,7 @@ export default function ARScreen() {
           }
         } else if (gestureRef.current.mode === 'pan') {
           // Handle pan with limits to prevent going off screen
-          // Calculate new position with a moderate movement multiplier
+          // Calculate new position with an increased movement multiplier
           const newPosX = positionRef.current.x + gestureState.dx * 0.002; // Reduced sensitivity from 0.005
           const newPosY = positionRef.current.y - gestureState.dy * 0.002; // Reduced sensitivity from 0.005, Invert Y for natural movement
           
