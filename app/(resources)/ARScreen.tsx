@@ -1,4 +1,4 @@
-import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text, ScrollView } from 'react-native';
+import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer } from 'expo-three';
 import { Asset } from 'expo-asset';
@@ -28,179 +28,36 @@ export default function ARScreen() {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
-  
-  // State for toggling labels
-  const [showLabels, setShowLabels] = useState(false);
-  // Ref to store label objects
-  const labelsRef = useRef<THREE.Object3D[]>([]);
 
   // Anatomical colors and labels mapping
   const anatomicalParts = [
-    { name: 'Vocalis Muscle', color: '#8B0000', position: [0.5, 0.2, 0.3] },
-    { name: 'Lateral Cricoarytenoid Muscle', color: '#A52A2A', position: [0.7, 0.1, 0.2] },
-    { name: 'Posterior Cricoarytenoid Muscle', color: '#CD5C5C', position: [-0.5, 0.1, 0.3] },
-    { name: 'Thyroid Cartilage', color: '#E8E8E8', position: [0, 0.4, 0.5] },
-    { name: 'Cricoid Cartilage', color: '#DCDCDC', position: [0, -0.3, 0.4] },
-    { name: 'Arytenoid Cartilages', color: '#D3D3D3', position: [0, 0, 0.6] },
-    { name: 'Cricothyroid Ligament', color: '#FFE4B5', position: [0.3, -0.1, 0.4] },
-    { name: 'Vocal Ligament', color: '#DEB887', position: [0.2, 0.1, 0.3] },
-    { name: 'Mucosa', color: '#FFB6C1', position: [0, 0.2, 0.5] },
+    { name: 'Vocalis Muscle', color: '#8B0000' },
+    { name: 'Lateral Cricoarytenoid Muscle', color: '#A52A2A' },
+    { name: 'Posterior Cricoarytenoid Muscle', color: '#CD5C5C' },
+    { name: 'Thyroid Cartilage', color: '#E8E8E8' },
+    { name: 'Cricoid Cartilage', color: '#DCDCDC' },
+    { name: 'Arytenoid Cartilages', color: '#D3D3D3' },
+    { name: 'Cricothyroid Ligament', color: '#FFE4B5' },
+    { name: 'Vocal Ligament', color: '#DEB887' },
+    { name: 'Mucosa', color: '#FFB6C1' },
   ];
 
   const getAnatomicalColor = (meshName: string, index: number): string => {
-    console.log('[Debug] Getting color for mesh:', meshName, 'index:', index);
-    // Try to extract Object_X pattern from the name if it exists
-    const objectMatch = meshName.match(/Object_(\d+)/);
-    let colorIndex = index % anatomicalParts.length; // Default fallback
-    
-    if (objectMatch) {
-      // Convert Object_X to index by extracting the number and using integer division
-      const objectNum = parseInt(objectMatch[1]);
-      colorIndex = Math.floor(objectNum / 2) % anatomicalParts.length;
-    }
-    
-    const part = anatomicalParts[colorIndex] || { name: 'Unknown', color: '#F0F0F0', position: [0, 0, 0] };
-    console.log('[Debug] Using color index', colorIndex, ':', part.name, part.color);
-    return part.color;
-  };
-
-  // Function to create 3D text labels
-  const createLabel = (text: string, position: [number, number, number], color: string): THREE.Object3D => {
-    // Create a group to hold the text and any background/line
-    const labelGroup = new THREE.Group();
-    
-    // Add a larger sphere to mark the label point
-    const sphereGeometry = new THREE.SphereGeometry(0.05, 12, 12);
-    const sphereMaterial = new THREE.MeshBasicMaterial({ color });
-    const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-    sphere.position.set(position[0], position[1], position[2]);
-    
-    // Create a bigger indicator sphere with the part name
-    const indicatorGeometry = new THREE.SphereGeometry(0.1, 16, 16);
-    const indicatorMaterial = new THREE.MeshPhongMaterial({
-      color: color,
-      transparent: true,
-      opacity: 0.7,
-      specular: 0x111111,
-      shininess: 30
-    });
-    const indicator = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
-    
-    // Position the indicator slightly offset from the main point
-    indicator.position.set(
-      position[0] + 0.3,
-      position[1] + 0.3,
-      position[2]
-    );
-    
-    // Add line connecting the sphere to the indicator
-    const lineGeometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(position[0], position[1], position[2]),
-      new THREE.Vector3(position[0] + 0.3, position[1] + 0.3, position[2])
-    ]);
-    const lineMaterial = new THREE.LineBasicMaterial({ 
-      color: '#ffffff', 
-      linewidth: 2 
-    });
-    const line = new THREE.Line(lineGeometry, lineMaterial);
-    
-    // Add all elements to the group
-    labelGroup.add(sphere);
-    labelGroup.add(line);
-    labelGroup.add(indicator);
-    
-    // Add name to the group for identification
-    labelGroup.name = text;
-    
-    return labelGroup;
-  };
-
-  // Function to toggle label visibility
-  const toggleLabels = () => {
-    setShowLabels(prev => {
-      const newState = !prev;
-      
-      // Show/hide labels based on new state
-      if (sceneRef.current) {
-        labelsRef.current.forEach(label => {
-          label.visible = newState;
-        });
-        
-        // Request render update
-        requestRender();
-      }
-      
-      return newState;
-    });
+    // ...existing code...
   };
 
   const loadModel = async () => {
-    try {
-      console.log('Starting model load...');
-      
-      // Ensure the model is downloaded and ready
-      await MODEL.downloadAsync();
-      console.log('Model downloaded successfully');
-      
-      if (!MODEL.localUri) {
-        console.error('Model state:', MODEL);
-        throw new Error('Model localUri is undefined after download');
-      }
-      
-      // Make sure we have the right format for iOS in Expo managed workflow
-      const uri = Platform.OS === 'ios' 
-        ? MODEL.localUri.startsWith('file://') 
-          ? MODEL.localUri 
-          : `file://${MODEL.localUri}` 
-        : MODEL.localUri;
-      
-      console.log('Using model URI:', uri);
-      return uri;
-    } catch (error) {
-      console.error('Error in loadModel:', error);
-      throw error;
-    }
+    // ...existing code...
   };
 
   // Function to calculate distance between two touches for pinch-to-zoom
   const getDistance = (touches: any[]): number => {
-    if (touches.length < 2) return 0;
-    
-    const [touch1, touch2] = touches;
-    const dx = touch1.pageX - touch2.pageX;
-    const dy = touch1.pageY - touch2.pageY;
-    
-    return Math.sqrt(dx * dx + dy * dy);
+    // ...existing code...
   };
 
   // Function to normalize model size
   const normalizeModel = (modelScene: THREE.Object3D) => {
-    // Calculate bounding box to determine model size
-    const box = new THREE.Box3().setFromObject(modelScene);
-    
-    // Get model dimensions
-    const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    
-    // Target size (standard size we want all models to fit within)
-    const targetSize = 2.0;
-    
-    // Calculate scale to fit the model in our standard size
-    const normalizedScale = targetSize / maxDim;
-    
-    console.log(`Model normalized: original max dimension ${maxDim}, scale factor ${normalizedScale}`);
-    
-    // Update zoom reference scale
-    zoomRef.current.scale = normalizedScale;
-    
-    // Apply normalized scale
-    modelScene.scale.set(normalizedScale, normalizedScale, normalizedScale);
-    
-    // Center the model
-    const center = box.getCenter(new THREE.Vector3());
-    modelScene.position.sub(center);
-    
-    return normalizedScale;
+    // ...existing code...
   };
 
   // Create pan responder for handling touch gestures
@@ -234,11 +91,11 @@ export default function ARScreen() {
         // Calculate zoom change factor
         if (zoomRef.current.lastDistance > 0) {
           const distanceChange = currentDistance - zoomRef.current.lastDistance;
-          const scaleFactor = 1 + distanceChange * 0.001; // Subtle zoom sensitivity
+          const scaleFactor = 1 + distanceChange * 0.001; // Adjust sensitivity
           
           // Update scale with constraints appropriate for normalized models
           const newScale = zoomRef.current.scale * scaleFactor;
-          zoomRef.current.scale = Math.max(0.2, Math.min(3.0, newScale)); // Updated constraints for normalized models
+          zoomRef.current.scale = Math.max(0.2, Math.min(3.0, newScale)); // Allow range from 0.2x to 3.0x
           
           // Apply scale to model
           if (model && model.scene) {
@@ -335,144 +192,6 @@ export default function ARScreen() {
     }
   };
 
-  const onContextCreate = async (gl: any) => {
-    // Store GL instance in ref
-    glRef.current = gl;
-    
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-    
-    const camera = new THREE.PerspectiveCamera(
-      75, gl.drawingBufferWidth / gl.drawingBufferHeight, 0.1, 1000
-    );
-    cameraRef.current = camera;
-    
-    const renderer = new Renderer({ gl });
-    rendererRef.current = renderer;
-    renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
-
-    try {
-      const modelURI = await loadModel();
-      console.log('Model URI received:', modelURI);
-      
-      if (!modelURI) {
-        throw new Error('Could not resolve model URI');
-      }
-
-      const loader = new GLTFLoader();
-      
-      // For debugging
-      loader.setPath('');
-      
-      // For Expo managed workflows, this approach works well
-      const response = await fetch(modelURI);
-      const blob = await response.blob();
-      const arrayBuffer = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(blob);
-      });
-      
-      // Fix: Assign to the model variable declared at component scope
-      model = await new Promise<GLTF>((resolve, reject) => {
-        loader.parse(
-          arrayBuffer as ArrayBuffer,
-          '',
-          resolve,
-          reject
-        );
-      });
-
-      // Replace all materials with anatomically colored materials based on mesh index
-      let meshIndex = 0;
-      model.scene.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          // Get appropriate color for this anatomical part
-          const colorHex = getAnatomicalColor(child.name, meshIndex);
-          const color = new THREE.Color(colorHex);
-          
-          // Create a simple phong material for better lighting
-          const material = new THREE.MeshPhongMaterial({
-            color: color,
-            specular: 0x333333,
-            shininess: 30,
-            flatShading: false,
-            transparent: true,
-            opacity: 0.95,
-          });
-          
-          // Apply the material to the mesh
-          child.material = material;
-          
-          // Log for debugging
-          console.log(`Applied ${colorHex} to mesh: ${child.name}`);
-          
-          // Increment mesh counter
-          meshIndex++;
-        }
-      });
-
-      // Apply normalization to ensure consistent size across models
-      // This replaces the manual scaling code
-      normalizeModel(model.scene);
-      
-      // Initialize position reference with the model's centered position
-      positionRef.current = {
-        x: model.scene.position.x,
-        y: model.scene.position.y
-      };
-      
-      scene.add(model.scene);
-      
-      // Create and add labels for anatomical parts
-      // Clear any existing labels
-      labelsRef.current = [];
-      
-      // Create a parent object for all labels
-      const labelsGroup = new THREE.Group();
-      labelsGroup.name = "labelsGroup";
-      
-      // Create labels for each anatomical part
-      anatomicalParts.forEach((part, index) => {
-        const label = createLabel(part.name, part.position as [number, number, number], part.color);
-        label.visible = showLabels; // Initially set based on state
-        labelsGroup.add(label);
-        labelsRef.current.push(label);
-      });
-      
-      // Add labels group to the scene
-      scene.add(labelsGroup);
-      
-    } catch (error) {
-      console.error('Error loading model:', error);
-      if (error instanceof Error) {
-        console.error('Error details:', error.message);
-        console.error('Error stack:', error.stack);
-      }
-    }
-
-    // Enhance lighting for better material visibility
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7); // Increased intensity
-    scene.add(ambientLight);
-    
-    const pointLight = new THREE.PointLight(0xffffff, 1);
-    pointLight.position.set(5, 5, 5);
-    scene.add(pointLight);
-    
-    // Add a secondary light from another angle for better depth
-    const pointLight2 = new THREE.PointLight(0xffffff, 0.8);
-    pointLight2.position.set(-5, -2, 2);
-    scene.add(pointLight2);
-
-    // Increased camera distance to see the properly scaled model
-    camera.position.z = 5;
-
-    // Initial render
-    renderer.render(scene, camera);
-    gl.endFrameEXP();
-  };
-
   // Function to reset model position, rotation and zoom
   const resetModel = () => {
     if (model && model.scene) {
@@ -498,6 +217,10 @@ export default function ARScreen() {
     }
   };
 
+  const onContextCreate = async (gl: any) => {
+    // ...existing code...
+  };
+
   return (
     <View style={styles.container}>
       <GLView
@@ -515,35 +238,6 @@ export default function ARScreen() {
       >
         <Text style={styles.resetButtonText}>Reset View</Text>
       </TouchableOpacity>
-      
-      {/* Toggle labels button */}
-      <TouchableOpacity 
-        style={styles.labelsButton} 
-        onPress={toggleLabels}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.buttonText}>
-          {showLabels ? 'Hide Labels' : 'Show Labels'}
-        </Text>
-      </TouchableOpacity>
-      
-      {/* Labels legend */}
-      {showLabels && (
-        <ScrollView 
-          style={styles.legendContainer} 
-          contentContainerStyle={styles.legendContent}
-          showsVerticalScrollIndicator={true}
-          persistentScrollbar={true}
-        >
-          <Text style={styles.legendTitle}>Anatomical Parts</Text>
-          {anatomicalParts.map((part, index) => (
-            <View key={index} style={styles.legendItem}>
-              <View style={[styles.legendColor, { backgroundColor: part.color }]} />
-              <Text style={styles.legendText}>{part.name}</Text>
-            </View>
-          ))}
-        </ScrollView>
-      )}
     </View>
   );
 }
@@ -584,73 +278,5 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 16,
-  },
-  labelsButton: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ffffff',
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  legendContainer: {
-    position: 'absolute',
-    top: 40,
-    right: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)',
-    borderRadius: 12,
-    maxWidth: 250,
-    maxHeight: '80%', // Increased from 70% to 80%
-    borderWidth: 2,
-    borderColor: '#555',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-  },
-  legendContent: {
-    padding: 15,
-    paddingBottom: 20,
-  },
-  legendTitle: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 20,
-    marginBottom: 15,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 8,
-    paddingVertical: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  legendColor: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    marginRight: 12,
-    borderWidth: 2,
-    borderColor: '#ffffff',
-  },
-  legendText: {
-    color: '#ffffff',
-    fontSize: 14,
-    flex: 1,
-    fontWeight: '500',
   },
 });
