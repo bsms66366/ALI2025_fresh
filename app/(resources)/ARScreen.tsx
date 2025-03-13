@@ -1,13 +1,21 @@
-import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text } from 'react-native';
+import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text, Animated, Dimensions } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer } from 'expo-three';
 import { Asset } from 'expo-asset';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import * as THREE from 'three';
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
 // Update path to use assets inside the app directory
 const MODEL = Asset.fromModule(require('../assets/pharynx_and_floor_of_mouth.glb'));
+
+// Type definition for our label data - simplified
+interface Label {
+  id: string;
+  name: string;
+  color: string;
+  worldPosition: THREE.Vector3; // Original position in 3D space
+}
 
 export default function ARScreen() {
   let timeout: number;
@@ -173,8 +181,12 @@ export default function ARScreen() {
               zoomRef.current.scale
             );
             
-            // Request render update
-            requestRender();
+            // Update the model's matrix to ensure proper transformation
+            model.scene.updateMatrix();
+            model.scene.updateMatrixWorld(true);
+            
+            // Request render update with a small delay to ensure matrix updates properly
+            setTimeout(() => requestRender(), 0);
           }
         }
         
@@ -212,7 +224,11 @@ export default function ARScreen() {
             model.scene.rotation.y = rotationRef.current.y;
             model.scene.rotation.x = rotationRef.current.x;
             
-            // Request render update
+            // Update the model's matrix
+            model.scene.updateMatrix();
+            model.scene.updateMatrixWorld(true);
+            
+            // Update render without delay for smooth interaction
             requestRender();
           }
         } else {
@@ -238,7 +254,11 @@ export default function ARScreen() {
             model.scene.position.x = positionRef.current.x - center.x;
             model.scene.position.y = positionRef.current.y - center.y;
             
-            // Request render update
+            // Update the model's matrix
+            model.scene.updateMatrix();
+            model.scene.updateMatrixWorld(true);
+            
+            // Update render without delay for smooth interaction
             requestRender();
           }
         }
@@ -252,9 +272,52 @@ export default function ARScreen() {
     },
   });
 
+  // State to manage labels
+  const [labels, setLabels] = useState<Label[]>([]);
+  // State to track if labels are visible
+  const [showLabels, setShowLabels] = useState(true);
+  // Animation value for label opacity
+  const labelOpacity = useRef(new Animated.Value(1)).current;
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  
+  // Window dimensions for positioning
+  const windowWidth = Dimensions.get('window').width;
+  const windowHeight = Dimensions.get('window').height;
+
+  // Simplified function to extract labels from model
+  const extractLabelsFromModel = (modelScene: THREE.Object3D) => {
+    // Create a simple label for each anatomical part
+    const extractedLabels = anatomicalParts.map((part, index) => ({
+      id: `label-${index}`,
+      name: part.name,
+      color: part.color,
+      worldPosition: new THREE.Vector3(0, index * 0.5 - 1, 0) // Position labels vertically stacked
+    }));
+    
+    setLabels(extractedLabels);
+  };
+
+  // Function to toggle labels visibility
+  const toggleLabels = () => {
+    const newState = !showLabels;
+    setShowLabels(newState);
+    
+    // Animate opacity change
+    Animated.timing(labelOpacity, {
+      toValue: newState ? 1 : 0,
+      duration: 300,
+      useNativeDriver: true
+    }).start();
+  };
+
   // Function to request a render update
   const requestRender = () => {
     if (glRef.current && sceneRef.current && cameraRef.current && rendererRef.current) {
+      // Update the model's matrices to ensure proper transformation
+      if (model && model.scene) {
+        model.scene.updateMatrixWorld(true);
+      }
+      
       rendererRef.current.render(sceneRef.current, cameraRef.current);
       glRef.current.endFrameEXP();
     }
@@ -349,6 +412,10 @@ export default function ARScreen() {
       };
       
       scene.add(model.scene);
+
+      // Extract labels from the model
+      extractLabelsFromModel(model.scene);
+      
     } catch (error) {
       console.error('Error loading model:', error);
       if (error instanceof Error) {
@@ -401,6 +468,49 @@ export default function ARScreen() {
       // Request render update
       requestRender();
     }
+    // Also clear selected label
+    setSelectedLabel(null);
+    
+    // Reset all material opacities
+    if (model && model.scene) {
+      model.scene.traverse((child) => {
+        if (child instanceof THREE.Mesh && child.material) {
+          const material = child.material as THREE.MeshPhongMaterial;
+          material.opacity = 0.95;
+        }
+      });
+    }
+    
+    requestRender();
+  };
+
+  // Select a label to highlight its corresponding part
+  const selectLabel = (labelId: string) => {
+    setSelectedLabel(labelId === selectedLabel ? null : labelId);
+    
+    // Highlight the corresponding model part
+    if (model && model.scene) {
+      const selectedPart = labels.find(l => l.id === labelId);
+      
+      model.scene.traverse((child) => {
+        if (child instanceof THREE.Mesh && child.material) {
+          const material = child.material as THREE.MeshPhongMaterial;
+          
+          // Reset all materials to original appearance
+          const originalColor = getAnatomicalColor(child.name, parseInt(child.name.split('_')[1] || '0'));
+          material.opacity = 0.95;
+          
+          // If this part matches the selected label, highlight it
+          if (selectedPart && material.color.getHexString() === selectedPart.color.replace('#', '').toLowerCase()) {
+            material.opacity = 1.0; // Full opacity for selected parts
+          } else if (selectedPart) {
+            material.opacity = 0.5; // Dim other parts
+          }
+        }
+      });
+      
+      requestRender();
+    }
   };
 
   return (
@@ -412,14 +522,45 @@ export default function ARScreen() {
       
       <View style={styles.touchHandler} {...panResponder.panHandlers} />
       
-      {/* Reset button */}
-      <TouchableOpacity 
-        style={styles.resetButton} 
-        onPress={resetModel}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.resetButtonText}>Reset View</Text>
-      </TouchableOpacity>
+      {/* Simplified labels panel instead of floating labels */}
+      {showLabels && (
+        <Animated.View style={[styles.labelsPanel, { opacity: labelOpacity }]}>
+          {labels.map(label => (
+            <TouchableOpacity
+              key={label.id}
+              style={[
+                styles.labelItem,
+                selectedLabel === label.id && { backgroundColor: `${label.color}50` }
+              ]}
+              onPress={() => selectLabel(label.id)}
+            >
+              <View style={[styles.colorIndicator, { backgroundColor: label.color }]} />
+              <Text style={styles.labelText}>{label.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </Animated.View>
+      )}
+      
+      {/* Control buttons */}
+      <View style={styles.controlsContainer}>
+        <TouchableOpacity 
+          style={styles.controlButton} 
+          onPress={toggleLabels}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonText}>
+            {showLabels ? 'Hide Labels' : 'Show Labels'}
+          </Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.controlButton} 
+          onPress={resetModel}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonText}>Reset View</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -460,5 +601,55 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  controlsContainer: {
+    position: 'absolute',
+    bottom: 20,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  controlButton: {
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ffffff',
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  labelsPanel: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 10,
+    padding: 10,
+    maxWidth: 200,
+    maxHeight: '60%',
+  },
+  labelItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 5,
+    marginVertical: 2,
+    borderRadius: 5,
+  },
+  colorIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  labelText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });
