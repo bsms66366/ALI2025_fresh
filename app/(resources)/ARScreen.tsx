@@ -1,4 +1,4 @@
-import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text } from 'react-native';
+import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text, ScrollView } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer } from 'expo-three';
 import { Asset } from 'expo-asset';
@@ -69,26 +69,45 @@ export default function ARScreen() {
     // Create a group to hold the text and any background/line
     const labelGroup = new THREE.Group();
     
-    // Instead of using TextGeometry which requires font loading,
-    // we'll use a simple sphere marker with a line
-    
-    // Add a small sphere to mark the label point
-    const sphereGeometry = new THREE.SphereGeometry(0.02, 8, 8);
+    // Add a larger sphere to mark the label point
+    const sphereGeometry = new THREE.SphereGeometry(0.05, 12, 12);
     const sphereMaterial = new THREE.MeshBasicMaterial({ color });
     const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
     sphere.position.set(position[0], position[1], position[2]);
     
-    // Add line connecting the sphere to text position
+    // Create a bigger indicator sphere with the part name
+    const indicatorGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+    const indicatorMaterial = new THREE.MeshPhongMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.7,
+      specular: 0x111111,
+      shininess: 30
+    });
+    const indicator = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
+    
+    // Position the indicator slightly offset from the main point
+    indicator.position.set(
+      position[0] + 0.3,
+      position[1] + 0.3,
+      position[2]
+    );
+    
+    // Add line connecting the sphere to the indicator
     const lineGeometry = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(position[0], position[1], position[2]),
-      new THREE.Vector3(position[0] + 0.1, position[1] + 0.1, position[2])
+      new THREE.Vector3(position[0] + 0.3, position[1] + 0.3, position[2])
     ]);
-    const lineMaterial = new THREE.LineBasicMaterial({ color: '#ffffff' });
+    const lineMaterial = new THREE.LineBasicMaterial({ 
+      color: '#ffffff', 
+      linewidth: 2 
+    });
     const line = new THREE.Line(lineGeometry, lineMaterial);
     
     // Add all elements to the group
     labelGroup.add(sphere);
     labelGroup.add(line);
+    labelGroup.add(indicator);
     
     // Add name to the group for identification
     labelGroup.name = text;
@@ -507,6 +526,24 @@ export default function ARScreen() {
           {showLabels ? 'Hide Labels' : 'Show Labels'}
         </Text>
       </TouchableOpacity>
+      
+      {/* Labels legend */}
+      {showLabels && (
+        <ScrollView 
+          style={styles.legendContainer} 
+          contentContainerStyle={styles.legendContent}
+          showsVerticalScrollIndicator={true}
+          persistentScrollbar={true}
+        >
+          <Text style={styles.legendTitle}>Anatomical Parts</Text>
+          {anatomicalParts.map((part, index) => (
+            <View key={index} style={styles.legendItem}>
+              <View style={[styles.legendColor, { backgroundColor: part.color }]} />
+              <Text style={styles.legendText}>{part.name}</Text>
+            </View>
+          ))}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -563,5 +600,57 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  legendContainer: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    borderRadius: 12,
+    maxWidth: 250,
+    maxHeight: '80%', // Increased from 70% to 80%
+    borderWidth: 2,
+    borderColor: '#555',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  legendContent: {
+    padding: 15,
+    paddingBottom: 20,
+  },
+  legendTitle: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 20,
+    marginBottom: 15,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 8,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  legendColor: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    marginRight: 12,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  legendText: {
+    color: '#ffffff',
+    fontSize: 14,
+    flex: 1,
+    fontWeight: '500',
   },
 });
