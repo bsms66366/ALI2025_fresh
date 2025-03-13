@@ -1,9 +1,10 @@
-import { StyleSheet, View, Platform } from 'react-native';
+import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer } from 'expo-three';
 import { Asset } from 'expo-asset';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import * as THREE from 'three';
+import React, { useRef, useState } from 'react';
 
 // Update path to use assets inside the app directory
 const MODEL = Asset.fromModule(require('../assets/larynx_with_muscles_and_ligaments.glb'));
@@ -12,6 +13,17 @@ export default function ARScreen() {
   let timeout: number;
   // Declare model variable at component scope
   let model: GLTF | null = null;
+  
+  // Ref for zoom level
+  const zoomRef = useRef({ scale: 0.05, lastDistance: 0 });
+  // Ref for rotation
+  const rotationRef = useRef({ x: 0, y: 0 });
+  
+  // State for storing the GL instance
+  const glRef = useRef<any>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef = useRef<Renderer | null>(null);
 
   // Anatomical colors and labels mapping
   const anatomicalParts = [
@@ -71,13 +83,111 @@ export default function ARScreen() {
     }
   };
 
+  // Function to calculate distance between two touches
+  const getDistance = (touches: any[]): number => {
+    if (touches.length < 2) return 0;
+    
+    const [touch1, touch2] = touches;
+    const dx = touch1.pageX - touch2.pageX;
+    const dy = touch1.pageY - touch2.pageY;
+    
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  // Create pan responder for handling touch gestures
+  const panResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    
+    // Handle gesture start
+    onPanResponderGrant: (evt) => {
+      const touches = evt.nativeEvent.touches;
+      
+      // Initialize last distance for pinch zoom
+      if (touches.length === 2) {
+        zoomRef.current.lastDistance = getDistance(touches);
+      }
+    },
+    
+    // Handle touch movement
+    onPanResponderMove: (evt: GestureResponderEvent, gestureState: PanResponderGestureState) => {
+      const touches = evt.nativeEvent.touches;
+      
+      // Handle pinch to zoom with two fingers
+      if (touches.length === 2) {
+        const currentDistance = getDistance(touches);
+        
+        // Calculate zoom change factor
+        if (zoomRef.current.lastDistance > 0) {
+          const distanceChange = currentDistance - zoomRef.current.lastDistance;
+          const scaleFactor = 1 + distanceChange * 0.001; // Adjust sensitivity
+          
+          // Update scale with constraints
+          const newScale = zoomRef.current.scale * scaleFactor;
+          zoomRef.current.scale = Math.max(0.01, Math.min(0.5, newScale)); // Limit scale between 0.01 and 0.5
+          
+          // Apply scale to model
+          if (model && model.scene) {
+            model.scene.scale.set(
+              zoomRef.current.scale,
+              zoomRef.current.scale,
+              zoomRef.current.scale
+            );
+            
+            // Request render update
+            requestRender();
+          }
+        }
+        
+        // Store current distance for next move
+        zoomRef.current.lastDistance = currentDistance;
+      }
+      // Handle rotation with one finger
+      else if (touches.length === 1) {
+        // Update rotation based on finger movement with reduced sensitivity
+        rotationRef.current = {
+          y: rotationRef.current.y + gestureState.dx * 0.0003, // Reduced from 0.01 to 0.003
+          x: rotationRef.current.x + gestureState.dy * 0.0003, // Reduced from 0.01 to 0.003
+        };
+        
+        // Apply rotation to the model if it exists
+        if (model && model.scene) {
+          model.scene.rotation.y = rotationRef.current.y;
+          model.scene.rotation.x = rotationRef.current.x;
+          
+          // Request render update
+          requestRender();
+        }
+      }
+    },
+    
+    // Handle gesture end
+    onPanResponderRelease: () => {
+      zoomRef.current.lastDistance = 0;
+    },
+  });
+
+  // Function to request a render update
+  const requestRender = () => {
+    if (glRef.current && sceneRef.current && cameraRef.current && rendererRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+      glRef.current.endFrameEXP();
+    }
+  };
+
   const onContextCreate = async (gl: any) => {
+    // Store GL instance in ref
+    glRef.current = gl;
+    
     const scene = new THREE.Scene();
+    sceneRef.current = scene;
+    
     const camera = new THREE.PerspectiveCamera(
       75, gl.drawingBufferWidth / gl.drawingBufferHeight, 0.1, 1000
     );
+    cameraRef.current = camera;
     
     const renderer = new Renderer({ gl });
+    rendererRef.current = renderer;
     renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
 
     try {
@@ -142,13 +252,15 @@ export default function ARScreen() {
         }
       });
 
-      // Reduced scale significantly to make the model appear smaller
-      model.scene.scale.set(0.05, 0.05, 0.05);
+      // Set initial scale - store in zoom ref
+      zoomRef.current.scale = 0.05;
+      model.scene.scale.set(
+        zoomRef.current.scale,
+        zoomRef.current.scale,
+        zoomRef.current.scale
+      );
       
       // Center the model
-      model.scene.position.set(0, 0, 0);
-      
-      // Optional: you can add this to fit the model to the view
       const box = new THREE.Box3().setFromObject(model.scene);
       const center = box.getCenter(new THREE.Vector3());
       model.scene.position.sub(center); // Center the model
@@ -181,23 +293,13 @@ export default function ARScreen() {
     // Increased camera distance to see the properly scaled model
     camera.position.z = 5;
 
-    // Add rotation to the rendered scene to see the model better
-    const render = () => {
-      timeout = requestAnimationFrame(render);
-      
-      // Slowly rotate the model for better viewing
-      if (model && model.scene) {
-        model.scene.rotation.y += 0.005;
-      }
-      
-      renderer.render(scene, camera);
-      gl.endFrameEXP();
-    };
-    render();
+    // Initial render
+    renderer.render(scene, camera);
+    gl.endFrameEXP();
   };
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} {...panResponder.panHandlers}>
       <GLView
         style={styles.glView}
         onContextCreate={onContextCreate}
