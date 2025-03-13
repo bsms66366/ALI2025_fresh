@@ -1,4 +1,4 @@
-import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState } from 'react-native';
+import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer } from 'expo-three';
 import { Asset } from 'expo-asset';
@@ -378,12 +378,48 @@ export default function ARScreen() {
     gl.endFrameEXP();
   };
 
+  // Function to reset model position, rotation and zoom
+  const resetModel = () => {
+    if (model && model.scene) {
+      // Calculate bounding box to determine model size
+      const box = new THREE.Box3().setFromObject(model.scene);
+      
+      // Reset position
+      const center = box.getCenter(new THREE.Vector3());
+      model.scene.position.sub(center);
+      positionRef.current = { x: 0, y: 0 };
+      
+      // Reset rotation
+      model.scene.rotation.x = 0;
+      model.scene.rotation.y = 0;
+      rotationRef.current = { x: 0, y: 0 };
+      
+      // Reset zoom - using the original normalized scale
+      const normalizedScale = zoomRef.current.scale;
+      model.scene.scale.set(normalizedScale, normalizedScale, normalizedScale);
+      
+      // Request render update
+      requestRender();
+    }
+  };
+
   return (
-    <View style={styles.container} {...panResponder.panHandlers}>
+    <View style={styles.container}>
       <GLView
         style={styles.glView}
         onContextCreate={onContextCreate}
       />
+      
+      <View style={styles.touchHandler} {...panResponder.panHandlers} />
+      
+      {/* Reset button */}
+      <TouchableOpacity 
+        style={styles.resetButton} 
+        onPress={resetModel}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.resetButtonText}>Reset View</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -395,5 +431,34 @@ const styles = StyleSheet.create({
   },
   glView: {
     flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  touchHandler: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'transparent',
+  },
+  resetButton: {
+    position: 'absolute',
+    bottom: 20,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#ffffff',
+  },
+  resetButtonText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 });
