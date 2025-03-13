@@ -4,7 +4,7 @@ import { Renderer } from 'expo-three';
 import { Asset } from 'expo-asset';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import * as THREE from 'three';
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 
 // Update path to use assets inside the app directory
 const MODEL = Asset.fromModule(require('../assets/pharynx_and_floor_of_mouth.glb'));
@@ -96,19 +96,24 @@ export default function ARScreen() {
     // Update the model's matrix
     modelScene.updateMatrix();
     modelScene.updateMatrixWorld(true);
+    
+    console.log('Model normalized with scale:', scale);
   };
 
   // Create pan responder for handling touch gestures
-  const panResponder = PanResponder.create({
+  const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
     
     // Handle gesture start
     onPanResponderGrant: (evt) => {
       const touches = evt.nativeEvent.touches;
+      console.log('Touch started with', touches.length, 'fingers');
       
       // Initialize last distance for pinch zoom
       if (touches.length === 2) {
         zoomRef.current.lastDistance = getDistance(touches);
+        console.log('Initial pinch distance:', zoomRef.current.lastDistance);
       } 
       // For single touch, track the start time to differentiate between short/long moves
       else if (touches.length === 1) {
@@ -116,6 +121,7 @@ export default function ARScreen() {
           mode: 'none', // Will be determined on first move
           initialTouchTime: Date.now()
         };
+        console.log('Single touch started, waiting for movement');
       }
     },
     
@@ -125,15 +131,18 @@ export default function ARScreen() {
       // Handle pinch to zoom with two fingers
       if (touches.length === 2) {
         const currentDistance = getDistance(touches);
+        console.log('Pinch gesture - current distance:', currentDistance);
         
         // Calculate zoom change factor
         if (zoomRef.current.lastDistance > 0) {
           const distanceChange = currentDistance - zoomRef.current.lastDistance;
-          const scaleFactor = 1 + distanceChange * 0.001; // Adjust sensitivity
+          const scaleFactor = 1 + distanceChange * 0.003; // Reduced sensitivity from 0.01
           
           // Update scale with constraints appropriate for normalized models
           const newScale = zoomRef.current.scale * scaleFactor;
           zoomRef.current.scale = Math.max(0.2, Math.min(3.0, newScale)); // Allow range from 0.2x to 3.0x
+          
+          console.log('Zoom updated to:', zoomRef.current.scale);
           
           // Apply scale to model
           if (model && model.scene) {
@@ -147,8 +156,8 @@ export default function ARScreen() {
             model.scene.updateMatrix();
             model.scene.updateMatrixWorld(true);
             
-            // Request render update with a small delay to ensure matrix updates properly
-            setTimeout(() => requestRender(), 0);
+            // Request render update immediately
+            requestRender();
           }
         }
         
@@ -167,19 +176,23 @@ export default function ARScreen() {
           // If movement is fast or diagonal, use rotation mode
           if (moveTime < 150 || (Math.abs(gestureState.dx) > 5 && Math.abs(gestureState.dy) > 5)) {
             gestureRef.current.mode = 'rotate';
+            console.log('Starting rotation mode');
           } else {
             // Otherwise use pan mode
             gestureRef.current.mode = 'pan';
+            console.log('Starting pan mode');
           }
         }
         
         // Apply the appropriate transformation based on mode
         if (gestureRef.current.mode === 'rotate') {
-          // Update rotation based on finger movement with reduced sensitivity
+          // Update rotation based on finger movement with moderate sensitivity
           rotationRef.current = {
-            y: rotationRef.current.y + gestureState.dx * 0.003,
-            x: rotationRef.current.x + gestureState.dy * 0.003,
+            y: rotationRef.current.y + gestureState.dx * 0.003, // Reduced sensitivity from 0.01
+            x: rotationRef.current.x + gestureState.dy * 0.003, // Reduced sensitivity from 0.01
           };
+          
+          console.log('Rotation updated to:', rotationRef.current);
           
           // Apply rotation to the model if it exists
           if (model && model.scene) {
@@ -193,14 +206,16 @@ export default function ARScreen() {
             // Update render without delay for smooth interaction
             requestRender();
           }
-        } else {
+        } else if (gestureRef.current.mode === 'pan') {
           // Handle pan with limits to prevent going off screen
-          // Calculate new position with a reduced movement multiplier
-          const newPosX = positionRef.current.x + gestureState.dx * 0.001;
-          const newPosY = positionRef.current.y - gestureState.dy * 0.001; // Invert Y for natural movement
+          // Calculate new position with a moderate movement multiplier
+          const newPosX = positionRef.current.x + gestureState.dx * 0.002; // Reduced sensitivity from 0.005
+          const newPosY = positionRef.current.y - gestureState.dy * 0.002; // Reduced sensitivity from 0.005, Invert Y for natural movement
+          
+          console.log('Pan updated to:', newPosX, newPosY);
           
           // Apply position limits to keep model visible
-          const positionLimit = 1.5; // Limit based on normalized model size
+          const positionLimit = 2.0; // Increased limit for more movement range
           positionRef.current = {
             x: Math.max(-positionLimit, Math.min(positionLimit, newPosX)),
             y: Math.max(-positionLimit, Math.min(positionLimit, newPosY)),
@@ -208,13 +223,8 @@ export default function ARScreen() {
           
           // Apply position to the model if it exists
           if (model && model.scene) {
-            // Get the current center position 
-            const box = new THREE.Box3().setFromObject(model.scene);
-            const center = box.getCenter(new THREE.Vector3());
-            
-            // Apply panning offset to the model
-            model.scene.position.x = positionRef.current.x - center.x;
-            model.scene.position.y = positionRef.current.y - center.y;
+            model.scene.position.x = positionRef.current.x;
+            model.scene.position.y = positionRef.current.y;
             
             // Update the model's matrix
             model.scene.updateMatrix();
@@ -229,10 +239,11 @@ export default function ARScreen() {
     
     // Handle gesture end
     onPanResponderRelease: () => {
+      console.log('Touch gesture ended');
       zoomRef.current.lastDistance = 0;
       gestureRef.current.mode = 'none';
     },
-  });
+  }), []);  // Added dependency array to useMemo
 
   // State to manage labels
   const [labels, setLabels] = useState<Label[]>([]);
@@ -282,6 +293,10 @@ export default function ARScreen() {
       
       rendererRef.current.render(sceneRef.current, cameraRef.current);
       glRef.current.endFrameEXP();
+      
+      console.log('Render requested and completed');
+    } else {
+      console.log('Cannot render: missing GL context or scene/camera/renderer');
     }
   };
 
@@ -300,6 +315,8 @@ export default function ARScreen() {
     const renderer = new Renderer({ gl });
     rendererRef.current = renderer;
     renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
+
+    console.log('GL context created, renderer initialized');
 
     try {
       const modelURI = await loadModel();
@@ -364,16 +381,28 @@ export default function ARScreen() {
       });
 
       // Apply normalization to ensure consistent size across models
-      // This replaces the manual scaling code
       normalizeModel(model.scene);
       
       // Initialize position reference with the model's centered position
       positionRef.current = {
-        x: model.scene.position.x,
-        y: model.scene.position.y
+        x: 0,
+        y: 0
+      };
+      
+      // Initialize rotation reference
+      rotationRef.current = {
+        x: 0,
+        y: 0
+      };
+      
+      // Set initial zoom reference
+      zoomRef.current = {
+        scale: model.scene.scale.x,
+        lastDistance: 0
       };
       
       scene.add(model.scene);
+      console.log('Model added to scene with scale:', model.scene.scale.x);
 
       // Extract labels from the model
       extractLabelsFromModel(model.scene);
