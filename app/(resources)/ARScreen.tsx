@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 
 // Update path to use assets inside the app directory
-const MODEL = Asset.fromModule(require('../assets/pharynx_and_floor_of_mouth.glb'));
+const MODEL = Asset.fromModule(require('../assets/larynx_with_muscles_and_ligaments.glb'));
 
 // Type definition for our label data - simplified
 interface Label {
