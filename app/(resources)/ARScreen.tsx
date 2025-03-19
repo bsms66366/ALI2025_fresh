@@ -15,14 +15,13 @@ interface Label {
   id: string;
   name: string;
   color: string;
-  worldPosition: THREE.Vector3; // Original position in 3D space
-  meshName?: string; // Name of the mesh this label is associated with
-  indicatorPosition?: THREE.Vector3; // Position for the indicator dot
+  meshName: string; // Name of the mesh this label is associated with
+  position: THREE.Vector3; // Position for the indicator dot
 }
 
 // Type for visual indicators
 interface VisualIndicator {
-  dot: THREE.Mesh;
+  sphere: THREE.Mesh;
   line: THREE.Line;
 }
 
@@ -281,147 +280,170 @@ export default function ARScreen() {
   const [labels, setLabels] = useState<Label[]>([]);
   // State to track if labels are visible
   const [showLabels, setShowLabels] = useState(true);
-  // Animation value for label opacity
-  const labelOpacity = useRef(new Animated.Value(1)).current;
+  // State to track selected label
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   
   // Ref to store visual indicators (dots and lines)
   const indicatorsRef = useRef<Record<string, VisualIndicator>>({});
-  
-  // Window dimensions for positioning
-  const windowWidth = Dimensions.get('window').width;
-  const windowHeight = Dimensions.get('window').height;
 
-  // Function to create a visual indicator (dot and line)
-  const createVisualIndicator = (label: Label): VisualIndicator | null => {
-    if (!sceneRef.current || !label.indicatorPosition) {
-      console.log(`Cannot create indicator for ${label.name}: missing scene or position`);
-      return null;
-    }
-    
-    console.log(`Creating indicator for ${label.name} at position:`, label.indicatorPosition);
-    
-    // Create a sphere for the dot indicator with a larger size for better visibility
-    const dotGeometry = new THREE.SphereGeometry(0.08, 16, 16);
-    const dotMaterial = new THREE.MeshBasicMaterial({ 
+  // Function to create a visual indicator for a label
+  const createVisualIndicator = (label: Label): VisualIndicator => {
+    // Create a sphere for the indicator
+    const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+    const material = new THREE.MeshBasicMaterial({
       color: label.color,
-      transparent: false,
-      opacity: 1.0
+      transparent: true,
+      opacity: 0.8
     });
-    const dot = new THREE.Mesh(dotGeometry, dotMaterial);
     
-    // Position the dot at a fixed offset from the center for better visibility
-    dot.position.copy(label.indicatorPosition);
-    dot.visible = false; // Initially hidden
+    const sphere = new THREE.Mesh(geometry, material);
+    sphere.position.copy(label.position);
+    sphere.visible = false; // Initially hidden
     
-    // Create a line from the indicator to the part
+    // Create a line from the model to the indicator
     const lineGeometry = new THREE.BufferGeometry();
-    // Use a fixed offset for the target position to ensure it's visible
-    const targetPosition = new THREE.Vector3(
-      label.indicatorPosition.x - 0.2,
-      label.indicatorPosition.y - 0.2,
-      label.indicatorPosition.z - 0.2
-    );
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: label.color,
+      linewidth: 2,
+    });
     
+    // Create points for the line
     const points = [
-      label.indicatorPosition,
-      targetPosition
+      new THREE.Vector3(0, 0, 0), // Will be updated to mesh position
+      label.position.clone()
     ];
     
     lineGeometry.setFromPoints(points);
-    const lineMaterial = new THREE.LineBasicMaterial({ 
-      color: label.color,
-      linewidth: 3 // Note: linewidth only works in WebGL 2
-    });
+    
     const line = new THREE.Line(lineGeometry, lineMaterial);
     line.visible = false; // Initially hidden
     
     // Add to scene
-    sceneRef.current.add(dot);
-    sceneRef.current.add(line);
+    if (sceneRef.current) {
+      sceneRef.current.add(sphere);
+      sceneRef.current.add(line);
+    }
     
-    console.log(`Created indicator for ${label.name}`);
-    
-    return { dot, line };
+    return { sphere, line };
   };
 
-  // Function to show/hide all indicators
-  const toggleAllIndicators = (visible: boolean): void => {
-    console.log(`${visible ? 'Showing' : 'Hiding'} all indicators`);
+  // Function to update line positions
+  const updateLinePositions = () => {
+    if (!model || !model.scene) return;
     
-    Object.entries(indicatorsRef.current).forEach(([labelId, indicator]) => {
-      if (indicator.dot) indicator.dot.visible = visible;
-      if (indicator.line) indicator.line.visible = visible;
-      console.log(`Indicator for ${labelId} visibility set to ${visible}`);
+    // Only update the selected label's line
+    if (selectedLabel && indicatorsRef.current[selectedLabel]) {
+      const indicator = indicatorsRef.current[selectedLabel];
+      const label = labels.find(l => l.id === selectedLabel);
+      
+      if (!label || !indicator.line) return;
+      
+      // Find the corresponding mesh in the model
+      let targetPosition = new THREE.Vector3();
+      let foundMesh = false;
+      
+      model.scene.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh && 
+            child.name.toLowerCase().includes(label.meshName.toLowerCase())) {
+          // Get the world position of the mesh
+          child.getWorldPosition(targetPosition);
+          foundMesh = true;
+        }
+      });
+      
+      // If mesh not found, use model center
+      if (!foundMesh) {
+        model.scene.getWorldPosition(targetPosition);
+      }
+      
+      // Update line geometry
+      const points = [
+        targetPosition,
+        indicator.sphere.position.clone()
+      ];
+      
+      // Update the line geometry
+      const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+      indicator.line.geometry.dispose();
+      indicator.line.geometry = lineGeometry;
+    }
+  };
+
+  // Initialize labels from anatomical parts
+  const initializeLabels = () => {
+    // Create labels from anatomical parts
+    const newLabels = anatomicalParts.map((part, index) => ({
+      id: `label-${index}`,
+      name: part.name,
+      color: part.color,
+      meshName: part.meshName,
+      position: part.position
+    }));
+    
+    setLabels(newLabels);
+    
+    // Create indicators for all labels
+    newLabels.forEach(label => {
+      indicatorsRef.current[label.id] = createVisualIndicator(label);
+    });
+  };
+
+  // Function to toggle labels visibility
+  const toggleLabels = (): void => {
+    setShowLabels(!showLabels);
+    
+    // Hide all indicators when labels are hidden
+    if (!showLabels) {
+      hideAllIndicators();
+      setSelectedLabel(null);
+    }
+  };
+  
+  // Hide all indicators
+  const hideAllIndicators = () => {
+    Object.values(indicatorsRef.current).forEach(indicator => {
+      if (indicator.sphere) indicator.sphere.visible = false;
+      if (indicator.line) indicator.line.visible = false;
     });
     
     // Request render update
     requestRender();
   };
 
-  // Simplified function to extract labels from model and create indicators
-  const extractLabelsFromModel = (modelScene: THREE.Object3D): void => {
-    // Create a label for each anatomical part with indicator positions
-    const extractedLabels = anatomicalParts.map((part, index) => {
-      // Find the mesh in the model if possible
-      let targetMesh: THREE.Object3D | null = null;
-      let worldPosition: THREE.Vector3 = new THREE.Vector3();
-      
-      modelScene.traverse((child: THREE.Object3D) => {
-        // Try to find a mesh with a name containing our part name (case insensitive)
-        if (child instanceof THREE.Mesh && 
-            child.name.toLowerCase().includes(part.meshName?.toLowerCase() || '')) {
-          targetMesh = child;
-          
-          // Get the world position of the mesh (center)
-          const boundingBox = new THREE.Box3().setFromObject(child);
-          boundingBox.getCenter(worldPosition);
-        }
-      });
-      
-      // If we couldn't find a specific mesh, use a default position
-      if (!worldPosition.x && !worldPosition.y && !worldPosition.z) {
-        worldPosition = new THREE.Vector3(0, index * 0.5 - 1, 0);
+  // Select a label to show its indicator
+  const selectLabel = (labelId: string): void => {
+    // If the same label is clicked again, deselect it
+    if (labelId === selectedLabel) {
+      // Hide the current indicator
+      const currentIndicator = indicatorsRef.current[labelId];
+      if (currentIndicator) {
+        currentIndicator.sphere.visible = false;
+        currentIndicator.line.visible = false;
       }
-      
-      return {
-        id: `label-${index}`,
-        name: part.name,
-        color: part.color,
-        worldPosition: worldPosition,
-        meshName: part.meshName,
-        indicatorPosition: part.position
-      };
-    });
-    
-    setLabels(extractedLabels);
-    
-    // Create visual indicators for each label
-    extractedLabels.forEach(label => {
-      const indicator = createVisualIndicator(label);
-      if (indicator) {
-        indicatorsRef.current[label.id] = indicator;
-      }
-    });
-  };
-
-  // Function to toggle labels visibility
-  const toggleLabels = (): void => {
-    const newState = !showLabels;
-    setShowLabels(newState);
-    
-    // Animate opacity change
-    Animated.timing(labelOpacity, {
-      toValue: newState ? 1 : 0,
-      duration: 300,
-      useNativeDriver: true
-    }).start();
-    
-    // Hide all indicators when labels are hidden
-    if (!newState) {
-      toggleAllIndicators(false);
       setSelectedLabel(null);
+    } else {
+      // Hide previous indicator if any
+      if (selectedLabel && indicatorsRef.current[selectedLabel]) {
+        const prevIndicator = indicatorsRef.current[selectedLabel];
+        prevIndicator.sphere.visible = false;
+        prevIndicator.line.visible = false;
+      }
+      
+      // Show new indicator
+      const newIndicator = indicatorsRef.current[labelId];
+      if (newIndicator) {
+        newIndicator.sphere.visible = true;
+        newIndicator.line.visible = true;
+        
+        // Update line position
+        updateLinePositions();
+      }
+      
+      setSelectedLabel(labelId);
     }
+    
+    // Request render update
+    requestRender();
   };
 
   // Function to request a render update
@@ -566,7 +588,7 @@ export default function ARScreen() {
       console.log('Model position in scene:', model.scene.position);
 
       // Extract labels from the model
-      extractLabelsFromModel(model.scene);
+      initializeLabels();
       
       // Model is loaded and ready
       setIsLoading(false);
@@ -604,139 +626,6 @@ export default function ARScreen() {
     gl.endFrameEXP();
   };
 
-  // Function to reset model position, rotation and zoom
-  const resetModel = (): void => {
-    console.log("Resetting model...");
-    
-    if (model && model.scene) {
-      try {
-        // First reset position to origin
-        model.scene.position.set(0, 0, 0);
-        console.log("Reset position to origin");
-        
-        // Calculate bounding box
-        const box = new THREE.Box3().setFromObject(model.scene);
-        const size = box.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
-        console.log("Model size:", size, "maxDim:", maxDim);
-        
-        // Scale model to the original normalized size
-        const scale = 2 / maxDim;
-        model.scene.scale.set(scale, scale, scale);
-        console.log("Set scale to:", scale);
-        
-        // Update zoom reference
-        zoomRef.current.scale = scale;
-        
-        // Center the model by calculating its center and moving it to origin
-        box.setFromObject(model.scene); // Recalculate after scaling
-        const center = box.getCenter(new THREE.Vector3());
-        model.scene.position.set(-center.x, -center.y, -center.z);
-        console.log("Centered model at:", -center.x, -center.y, -center.z);
-        
-        // Reset rotation
-        model.scene.rotation.x = 0;
-        model.scene.rotation.y = 0;
-        console.log("Reset rotation");
-        
-        // Reset refs
-        positionRef.current = { x: 0, y: 0 };
-        rotationRef.current = { x: 0, y: 0 };
-        
-        // Update matrices
-        model.scene.updateMatrix();
-        model.scene.updateMatrixWorld(true);
-        
-        console.log('Model reset to initial position and scale');
-      } catch (error) {
-        console.error("Error resetting model:", error);
-      }
-    } else {
-      console.error("Cannot reset model: model or model.scene is null");
-    }
-    
-    // Clear selected label
-    setSelectedLabel(null);
-    
-    // Reset all material opacities
-    if (model && model.scene) {
-      model.scene.traverse((child: THREE.Object3D) => {
-        if (child instanceof THREE.Mesh && child.material) {
-          const material = child.material as THREE.MeshPhongMaterial;
-          material.opacity = 0.95;
-        }
-      });
-    }
-    
-    // Hide all indicators
-    toggleAllIndicators(false);
-    
-    // Request render update
-    requestRender();
-    
-    console.log("Reset complete");
-  };
-
-  // Select a label to highlight its corresponding part
-  const selectLabel = (labelId: string): void => {
-    console.log(`Selecting label: ${labelId}, previous selection: ${selectedLabel}`);
-    
-    // If the same label is clicked again, deselect it
-    const newSelectedLabel = labelId === selectedLabel ? null : labelId;
-    setSelectedLabel(newSelectedLabel);
-    
-    // Hide all indicators first
-    toggleAllIndicators(false);
-    
-    // Highlight the corresponding model part and show its indicator
-    if (model && model.scene) {
-      const selectedPart = labels.find(l => l.id === labelId);
-      
-      if (selectedPart) {
-        console.log(`Found selected part: ${selectedPart.name}, meshName: ${selectedPart.meshName}`);
-        
-        let foundMatchingMesh = false;
-        
-        model.scene.traverse((child: THREE.Object3D) => {
-          if (child instanceof THREE.Mesh && child.material) {
-            const material = child.material as THREE.MeshPhongMaterial;
-            
-            // Reset all materials to original appearance
-            material.opacity = 0.95;
-            
-            // If this part matches the selected label, highlight it
-            if (selectedPart && 
-                child.name.toLowerCase().includes(selectedPart.meshName?.toLowerCase() || '')) {
-              console.log(`Highlighting mesh: ${child.name}`);
-              material.opacity = 1.0; // Full opacity for selected parts
-              foundMatchingMesh = true;
-            } else if (selectedPart) {
-              material.opacity = 0.5; // Dim other parts
-            }
-          }
-        });
-        
-        if (!foundMatchingMesh) {
-          console.log(`Warning: No matching mesh found for ${selectedPart.name}`);
-        }
-      }
-      
-      // Show indicator for the selected label
-      if (newSelectedLabel && indicatorsRef.current[newSelectedLabel]) {
-        const indicator = indicatorsRef.current[newSelectedLabel];
-        console.log(`Showing indicator for ${newSelectedLabel}`);
-        indicator.dot.visible = true;
-        indicator.line.visible = true;
-      } else if (newSelectedLabel) {
-        console.log(`Warning: No indicator found for ${newSelectedLabel}`);
-      }
-      
-      requestRender();
-    } else {
-      console.error("Cannot select label: model or model.scene is null");
-    }
-  };
-
   return (
     <View style={styles.container}>
       <GLView
@@ -753,9 +642,9 @@ export default function ARScreen() {
         </View>
       )}
       
-      {/* Simplified labels panel instead of floating labels */}
+      {/* Labels legend */}
       {showLabels && (
-        <Animated.View style={[styles.labelsPanel, { opacity: labelOpacity }]}>
+        <View style={styles.labelsPanel}>
           {labels.map(label => (
             <TouchableOpacity
               key={label.id}
@@ -769,7 +658,7 @@ export default function ARScreen() {
               <Text style={styles.labelText}>{label.name}</Text>
             </TouchableOpacity>
           ))}
-        </Animated.View>
+        </View>
       )}
       
       {/* Control buttons */}
@@ -786,7 +675,30 @@ export default function ARScreen() {
         
         <TouchableOpacity 
           style={styles.controlButton} 
-          onPress={resetModel}
+          onPress={() => {
+            // Reset model position, rotation and zoom
+            if (model && model.scene) {
+              model.scene.position.set(0, 0, 0);
+              model.scene.rotation.set(0, 0, 0);
+              model.scene.scale.set(zoomRef.current.scale, zoomRef.current.scale, zoomRef.current.scale);
+              model.scene.updateMatrix();
+              model.scene.updateMatrixWorld(true);
+            }
+            // Reset refs
+            positionRef.current = {
+              x: 0,
+              y: 0
+            };
+            rotationRef.current = {
+              x: 0,
+              y: 0
+            };
+            // Hide all indicators
+            hideAllIndicators();
+            setSelectedLabel(null);
+            // Request render update
+            requestRender();
+          }}
           activeOpacity={0.7}
         >
           <Text style={styles.buttonText}>Reset View</Text>
