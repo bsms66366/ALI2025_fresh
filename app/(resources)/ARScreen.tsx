@@ -1,4 +1,4 @@
-import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text, Animated, Dimensions } from 'react-native';
+import { StyleSheet, View, Platform, PanResponder, GestureResponderEvent, PanResponderGestureState, TouchableOpacity, Text, Animated, Dimensions, ScrollView } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer } from 'expo-three';
 import { Asset } from 'expo-asset';
@@ -6,9 +6,6 @@ import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import * as THREE from 'three';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-
-// URL to the model - replace with your actual URL
-const MODEL_URL = 'https://placements.bsms.ac.uk/storage/larynx_with_muscles_and_ligaments.glb';
 
 // Type definition for our label data - simplified
 interface Label {
@@ -23,6 +20,14 @@ interface Label {
 interface VisualIndicator {
   sphere: THREE.Mesh;
   line: THREE.Line;
+}
+
+// Type for 3D model data
+interface Model3D {
+  id: number;
+  name: string;
+  url: string;
+  category: string;
 }
 
 export default function ARScreen() {
@@ -48,6 +53,21 @@ export default function ARScreen() {
   // Add loading state
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState('Loading 3D model, please wait...');
+  
+  // State for models and active model
+  const [models, setModels] = useState<Model3D[]>([]);
+  const [activeModelIndex, setActiveModelIndex] = useState(0);
+  const [fetchingModels, setFetchingModels] = useState(true);
+
+  // State to track if labels are visible
+  const [showLabels, setShowLabels] = useState(true);
+  // State to track selected label
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  // State for storing labels
+  const [labels, setLabels] = useState<Label[]>([]);
+  
+  // Ref to store visual indicators (dots and lines)
+  const indicatorsRef = useRef<Record<string, VisualIndicator>>({});
 
   // Anatomical colors and labels mapping
   const anatomicalParts = [
@@ -70,8 +90,16 @@ export default function ARScreen() {
 
   const loadModel = async (): Promise<ArrayBuffer | null> => {
     try {
-      // Option 1: Load from URL using axios
-      const response = await axios.get(MODEL_URL, {
+      if (models.length === 0) {
+        console.error('No models available to load');
+        return null;
+      }
+      
+      const activeModel = models[activeModelIndex];
+      console.log(`Loading model: ${activeModel.name} from ${activeModel.url}`);
+      
+      // Load from URL using axios
+      const response = await axios.get(activeModel.url, {
         responseType: 'arraybuffer'
       });
       console.log('Model loaded from URL successfully');
@@ -278,16 +306,6 @@ export default function ARScreen() {
       gestureRef.current.mode = 'none';
     },
   }), []);  // Added dependency array to useMemo
-
-  // State to manage labels
-  const [labels, setLabels] = useState<Label[]>([]);
-  // State to track if labels are visible
-  const [showLabels, setShowLabels] = useState(true);
-  // State to track selected label
-  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
-  
-  // Ref to store visual indicators (dots and lines)
-  const indicatorsRef = useRef<Record<string, VisualIndicator>>({});
 
   // Function to create a visual indicator for a label
   const createVisualIndicator = (label: Label): VisualIndicator => {
@@ -633,18 +651,304 @@ export default function ARScreen() {
     gl.endFrameEXP();
   };
 
+  // Function to apply colors to model parts
+  const applyColorsToModel = (modelScene: THREE.Object3D): void => {
+    let meshIndex = 0;
+    modelScene.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.Mesh) {
+        // Get appropriate color for this anatomical part
+        const colorHex = getAnatomicalColor(child.name, meshIndex);
+        const color = new THREE.Color(colorHex);
+        
+        // Create a simple phong material for better lighting
+        const material = new THREE.MeshPhongMaterial({
+          color: color,
+          specular: 0x333333,
+          shininess: 30,
+          flatShading: false,
+          transparent: true,
+          opacity: 0.95,
+        });
+        
+        // Apply the material to the mesh
+        child.material = material;
+        
+        // Log for debugging
+        console.log(`Applied ${colorHex} to mesh: ${child.name}`);
+        
+        // Increment mesh counter
+        meshIndex++;
+      }
+    });
+  };
+
+  // Fetch models from API
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        setFetchingModels(true);
+        console.log('Fetching models from API...');
+        
+        // Define hardcoded models as fallback
+        const hardcodedModels = [
+          {
+            id: 1,
+            name: 'Larynx',
+            url: 'https://placements.bsms.ac.uk/storage/larynx_with_muscles_and_ligaments.glb',
+            category: '3D Model'
+          },
+          {
+            id: 2,
+            name: 'Pharynx',
+            url: 'https://placements.bsms.ac.uk/storage/pharynx_and_floor_of_mouth.glb',
+            category: '3D Model'
+          }
+        ];
+        
+        try {
+          // Try to fetch from API first
+          const response = await axios.get('https://placements.bsms.ac.uk/api/physquizzes');
+          console.log('API response:', response.data);
+          
+          // Filter for 3D model category
+          const modelData = response.data.filter((item: any) => 
+            item.category === '3D Model'
+          ).map((item: any) => ({
+            id: item.id,
+            name: item.name,
+            url: item.url || `https://placements.bsms.ac.uk/storage/${item.filename}`,
+            category: item.category
+          }));
+          
+          console.log('Filtered models from API:', modelData.length);
+          
+          if (modelData.length > 0) {
+            setModels(modelData);
+          } else {
+            console.log('No models found in API, using hardcoded models');
+            setModels(hardcodedModels);
+          }
+        } catch (apiError) {
+          console.error('Error fetching from API, using hardcoded models:', apiError);
+          setModels(hardcodedModels);
+        }
+      } catch (error) {
+        console.error('Error in fetchModels function:', error);
+        // Ensure we always have at least the default models
+        setModels([
+          {
+            id: 1,
+            name: 'Larynx',
+            url: 'https://placements.bsms.ac.uk/storage/larynx_with_muscles_and_ligaments.glb',
+            category: '3D Model'
+          },
+          {
+            id: 2,
+            name: 'Pharynx',
+            url: 'https://placements.bsms.ac.uk/storage/pharynx_and_floor_of_mouth.glb',
+            category: '3D Model'
+          }
+        ]);
+      } finally {
+        setFetchingModels(false);
+      }
+    };
+    
+    fetchModels();
+  }, []);
+
+  // Load the model when models are fetched or active model changes
+  useEffect(() => {
+    if (!fetchingModels && models.length > 0 && glRef.current) {
+      loadAndDisplayModel();
+    }
+  }, [fetchingModels, activeModelIndex, models]);
+
+  // Function to load and display the model
+  const loadAndDisplayModel = async () => {
+    setIsLoading(true);
+    setLoadingMessage('Loading 3D model, please wait...');
+    
+    // Clear existing model and scene
+    if (sceneRef.current) {
+      // First, remove all objects from the scene
+      while (sceneRef.current.children.length > 0) {
+        const object = sceneRef.current.children[0];
+        sceneRef.current.remove(object);
+      }
+      
+      // Re-add lights after clearing the scene
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      sceneRef.current.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(1, 1, 1);
+      sceneRef.current.add(directionalLight);
+      
+      console.log('Scene cleared, lights re-added');
+    }
+    
+    // Reset model reference
+    modelRef.current = null;
+    
+    // Clear existing indicators
+    Object.values(indicatorsRef.current).forEach(indicator => {
+      if (indicator.sphere) indicator.sphere.geometry.dispose();
+      if (indicator.sphere && indicator.sphere.material) {
+        if (Array.isArray(indicator.sphere.material)) {
+          indicator.sphere.material.forEach(m => m.dispose());
+        } else {
+          indicator.sphere.material.dispose();
+        }
+      }
+      
+      if (indicator.line) indicator.line.geometry.dispose();
+      if (indicator.line && indicator.line.material) {
+        if (Array.isArray(indicator.line.material)) {
+          indicator.line.material.forEach(m => m.dispose());
+        } else {
+          indicator.line.material.dispose();
+        }
+      }
+    });
+    indicatorsRef.current = {};
+    
+    // Load the model
+    const modelData = await loadModel();
+    if (!modelData) {
+      setLoadingMessage('Failed to load model. Please try again.');
+      return;
+    }
+    
+    // Parse the model with GLTFLoader
+    const loader = new GLTFLoader();
+    loader.parse(
+      modelData,
+      '',
+      (gltf) => {
+        console.log('Model parsed successfully');
+        
+        // Store the model reference
+        modelRef.current = gltf;
+        
+        // Normalize and center the model
+        const normalizedModel = normalizeModel(gltf.scene);
+        
+        // Add the model to the scene
+        if (sceneRef.current) {
+          sceneRef.current.add(normalizedModel);
+          
+          // Apply colors to the model parts
+          applyColorsToModel(normalizedModel);
+          
+          // Initialize labels for this model
+          initializeLabels();
+          
+          // Hide loading indicator
+          setIsLoading(false);
+          
+          // Request a render update
+          requestRender();
+          
+          console.log('New model added to scene:', models[activeModelIndex].name);
+        }
+      },
+      (error) => {
+        console.error('Error parsing model:', error);
+        setLoadingMessage('Error loading model. Please try again.');
+      }
+    );
+  };
+
+  // Function to reset model transform (position, rotation, scale)
+  const resetModelTransform = () => {
+    // Reset model position and rotation
+    if (modelRef.current) {
+      // Use the initial scale that was calculated when the model was loaded
+      const initialScale = zoomRef.current.initialScale;
+      
+      // Reset position to center
+      modelRef.current.scene.position.set(0, 0, 0);
+      // Reset rotation
+      modelRef.current.scene.rotation.set(0, 0, 0);
+      // Reset zoom reference
+      zoomRef.current = {
+        scale: initialScale,
+        lastDistance: 0,
+        initialScale: initialScale // Preserve the initial scale
+      };
+      // Apply the scale to the model
+      modelRef.current.scene.scale.set(initialScale, initialScale, initialScale);
+      
+      // Update the model's matrix
+      modelRef.current.scene.updateMatrix();
+      modelRef.current.scene.updateMatrixWorld(true);
+    } else {
+      console.log('Model not available for reset');
+    }
+    
+    // Reset position and rotation references
+    positionRef.current = {
+      x: 0,
+      y: 0
+    };
+    rotationRef.current = {
+      x: 0,
+      y: 0
+    };
+    
+    // Hide all indicators
+    hideAllIndicators();
+    setSelectedLabel(null);
+    
+    // Request render update
+    requestRender();
+    console.log('View reset completed');
+  };
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (timeout) {
+        cancelAnimationFrame(timeout);
+      }
+    };
+  }, []);
+
   return (
-    <View style={styles.container}>
+    <View style={styles.container} {...panResponder.panHandlers}>
+      {/* Model selector buttons */}
+      <View style={styles.modelSelectorContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {models.map((model, index) => (
+            <TouchableOpacity
+              key={`model-${model.id}-${index}`}
+              style={[
+                styles.modelButton,
+                activeModelIndex === index && styles.activeModelButton
+              ]}
+              onPress={() => setActiveModelIndex(index)}
+            >
+              <Text style={[
+                styles.modelButtonText,
+                activeModelIndex === index && styles.activeModelButtonText
+              ]}>
+                {model.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+      
+      {/* GL View for 3D rendering */}
       <GLView
         style={styles.glView}
         onContextCreate={onContextCreate}
       />
       
-      <View style={styles.touchHandler} {...panResponder.panHandlers} />
-      
-      {/* Loading overlay */}
-      {isLoading && (
-        <View style={styles.loadingOverlay}>
+      {/* Loading indicator */}
+      {(isLoading || fetchingModels) && (
+        <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>{loadingMessage}</Text>
         </View>
       )}
@@ -670,57 +974,16 @@ export default function ARScreen() {
       
       {/* Control buttons */}
       <View style={styles.controlsContainer}>
-        <TouchableOpacity 
-          style={styles.controlButton} 
-          onPress={() => {
-            // Reset model position and rotation
-            if (modelRef.current) {
-              // Use the initial scale that was calculated when the model was loaded
-              const initialScale = zoomRef.current.initialScale;
-              
-              // Reset position to center
-              modelRef.current.scene.position.set(0, 0, 0);
-              // Reset rotation
-              modelRef.current.scene.rotation.set(0, 0, 0);
-              // Reset zoom reference
-              zoomRef.current = {
-                scale: initialScale,
-                lastDistance: 0,
-                initialScale: initialScale // Preserve the initial scale
-              };
-              // Apply the scale to the model
-              modelRef.current.scene.scale.set(initialScale, initialScale, initialScale);
-              
-              // Update the model's matrix
-              modelRef.current.scene.updateMatrix();
-              modelRef.current.scene.updateMatrixWorld(true);
-            } else {
-              console.log('Model not available for reset');
-            }
-            
-            // Reset position and rotation references
-            positionRef.current = {
-              x: 0,
-              y: 0
-            };
-            rotationRef.current = {
-              x: 0,
-              y: 0
-            };
-            
-            // Hide all indicators
-            hideAllIndicators();
-            setSelectedLabel(null);
-            
-            // Request render update
-            requestRender();
-            console.log('View reset completed');
-          }}
+        {/* Reset button */}
+        <TouchableOpacity
+          style={styles.controlButton}
+          onPress={resetModelTransform}
           activeOpacity={0.7}
         >
           <Text style={styles.buttonText}>Reset View</Text>
         </TouchableOpacity>
         
+        {/* Toggle labels button */}
         <TouchableOpacity 
           style={styles.controlButton} 
           onPress={toggleLabels}
@@ -743,22 +1006,46 @@ const styles = StyleSheet.create({
   glView: {
     flex: 1,
   },
-  touchHandler: {
+  loadingContainer: {
     ...StyleSheet.absoluteFillObject,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
   },
   loadingText: {
-    color: 'white',
-    fontSize: 18,
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 10,
+  },
+  modelSelectorContainer: {
+    position: 'absolute',
+    top: 40,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  modelButton: {
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginHorizontal: 5,
+    borderWidth: 1,
+    borderColor: '#444',
+  },
+  activeModelButton: {
+    backgroundColor: '#bcba40',
+    borderColor: '#FAD607',
+  },
+  modelButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  activeModelButtonText: {
+    color: '#000000',
     fontWeight: 'bold',
-    textAlign: 'center',
-    padding: 20,
   },
   controlsContainer: {
     position: 'absolute',
@@ -784,7 +1071,7 @@ const styles = StyleSheet.create({
   },
   labelsPanel: {
     position: 'absolute',
-    top: 10,
+    top: 90, // Moved down to avoid overlap with model selector
     right: 10,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     borderRadius: 10,
