@@ -28,10 +28,10 @@ interface VisualIndicator {
 export default function ARScreen() {
   let timeout: number;
   // Declare model variable at component scope
-  let model: GLTF | null = null;
+  const modelRef = useRef<GLTF | null>(null);
   
   // Add zoom reference for pinch-to-zoom
-  const zoomRef = useRef({ scale: 0.05, lastDistance: 0 });
+  const zoomRef = useRef({ scale: 0.05, lastDistance: 0, initialScale: 0.05 });
   // Ref for position with limits to prevent going off screen
   const positionRef = useRef({ x: 0, y: 0 });
   // Ref for rotation values
@@ -107,6 +107,7 @@ export default function ARScreen() {
     
     // Update zoom reference to match the normalized scale
     zoomRef.current.scale = scale;
+    zoomRef.current.initialScale = scale; // Store the initial scale for reset
     
     // Recalculate bounding box after scaling
     box.setFromObject(modelScene);
@@ -171,21 +172,23 @@ export default function ARScreen() {
           
           // Update scale with constraints appropriate for normalized models
           const newScale = zoomRef.current.scale * scaleFactor;
-          zoomRef.current.scale = Math.max(0.2, Math.min(3.0, newScale)); // Allow range from 0.2x to 3.0x
+          // Set minimum scale to 20% of initial scale to prevent shrinking too much
+          const minScale = zoomRef.current.initialScale * 0.2;
+          zoomRef.current.scale = Math.max(minScale, Math.min(3.0, newScale)); // Allow range from minScale to 3.0x
           
           console.log('Zoom updated to:', zoomRef.current.scale);
           
           // Apply scale to model
-          if (model && model.scene) {
-            model.scene.scale.set(
+          if (modelRef.current && modelRef.current.scene) {
+            modelRef.current.scene.scale.set(
               zoomRef.current.scale,
               zoomRef.current.scale,
               zoomRef.current.scale
             );
             
             // Update the model's matrix to ensure proper transformation
-            model.scene.updateMatrix();
-            model.scene.updateMatrixWorld(true);
+            modelRef.current.scene.updateMatrix();
+            modelRef.current.scene.updateMatrixWorld(true);
             
             // Request render update immediately
             requestRender();
@@ -226,13 +229,13 @@ export default function ARScreen() {
           console.log('Rotation updated to:', rotationRef.current);
           
           // Apply rotation to the model if it exists
-          if (model && model.scene) {
-            model.scene.rotation.y = rotationRef.current.y;
-            model.scene.rotation.x = rotationRef.current.x;
+          if (modelRef.current && modelRef.current.scene) {
+            modelRef.current.scene.rotation.y = rotationRef.current.y;
+            modelRef.current.scene.rotation.x = rotationRef.current.x;
             
             // Update the model's matrix
-            model.scene.updateMatrix();
-            model.scene.updateMatrixWorld(true);
+            modelRef.current.scene.updateMatrix();
+            modelRef.current.scene.updateMatrixWorld(true);
             
             // Update render without delay for smooth interaction
             requestRender();
@@ -253,13 +256,13 @@ export default function ARScreen() {
           };
           
           // Apply position to the model if it exists
-          if (model && model.scene) {
-            model.scene.position.x = positionRef.current.x;
-            model.scene.position.y = positionRef.current.y;
+          if (modelRef.current && modelRef.current.scene) {
+            modelRef.current.scene.position.x = positionRef.current.x;
+            modelRef.current.scene.position.y = positionRef.current.y;
             
             // Update the model's matrix
-            model.scene.updateMatrix();
-            model.scene.updateMatrixWorld(true);
+            modelRef.current.scene.updateMatrix();
+            modelRef.current.scene.updateMatrixWorld(true);
             
             // Update render without delay for smooth interaction
             requestRender();
@@ -329,7 +332,7 @@ export default function ARScreen() {
 
   // Function to update line positions
   const updateLinePositions = () => {
-    if (!model || !model.scene) return;
+    if (!modelRef.current || !modelRef.current.scene) return;
     
     // Only update the selected label's line
     if (selectedLabel && indicatorsRef.current[selectedLabel]) {
@@ -342,7 +345,7 @@ export default function ARScreen() {
       let targetPosition = new THREE.Vector3();
       let foundMesh = false;
       
-      model.scene.traverse((child: THREE.Object3D) => {
+      modelRef.current.scene.traverse((child: THREE.Object3D) => {
         if (child instanceof THREE.Mesh && 
             child.name.toLowerCase().includes(label.meshName.toLowerCase())) {
           // Get the world position of the mesh
@@ -353,7 +356,7 @@ export default function ARScreen() {
       
       // If mesh not found, use model center
       if (!foundMesh) {
-        model.scene.getWorldPosition(targetPosition);
+        modelRef.current.scene.getWorldPosition(targetPosition);
       }
       
       // Update line geometry
@@ -450,8 +453,8 @@ export default function ARScreen() {
   const requestRender = (): void => {
     if (glRef.current && sceneRef.current && cameraRef.current && rendererRef.current) {
       // Update the model's matrices to ensure proper transformation
-      if (model && model.scene) {
-        model.scene.updateMatrixWorld(true);
+      if (modelRef.current && modelRef.current.scene) {
+        modelRef.current.scene.updateMatrixWorld(true);
       }
       
       rendererRef.current.render(sceneRef.current, cameraRef.current);
@@ -496,8 +499,8 @@ export default function ARScreen() {
       // For debugging
       loader.setPath('');
       
-      // Fix: Assign to the model variable declared at component scope
-      model = await new Promise<GLTF>((resolve, reject) => {
+      // Fix: Assign to the model ref instead of the component-level variable
+      modelRef.current = await new Promise<GLTF>((resolve, reject) => {
         loader.parse(
           modelData,
           '',
@@ -509,7 +512,7 @@ export default function ARScreen() {
       setLoadingMessage('Applying materials...');
       // Replace all materials with anatomically colored materials based on mesh index
       let meshIndex = 0;
-      model.scene.traverse((child: THREE.Object3D) => {
+      modelRef.current.scene.traverse((child: THREE.Object3D) => {
         if (child instanceof THREE.Mesh) {
           // Get appropriate color for this anatomical part
           const colorHex = getAnatomicalColor(child.name, meshIndex);
@@ -538,31 +541,32 @@ export default function ARScreen() {
 
       // A simpler approach to center the model
       // First reset position
-      model.scene.position.set(0, 0, 0);
+      modelRef.current.scene.position.set(0, 0, 0);
       
       // Calculate bounding box
-      const box = new THREE.Box3().setFromObject(model.scene);
+      const box = new THREE.Box3().setFromObject(modelRef.current.scene);
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
       
       // Scale model to a reasonable size
       const scale = 2 / maxDim;
-      model.scene.scale.set(scale, scale, scale);
+      modelRef.current.scene.scale.set(scale, scale, scale);
       
       // Update zoom reference
       zoomRef.current.scale = scale;
+      zoomRef.current.initialScale = scale; // Store the initial scale for reset
       
       // Center the model by calculating its center and moving it to origin
-      box.setFromObject(model.scene); // Recalculate after scaling
+      box.setFromObject(modelRef.current.scene); // Recalculate after scaling
       const center = box.getCenter(new THREE.Vector3());
-      model.scene.position.set(-center.x, -center.y, -center.z);
+      modelRef.current.scene.position.set(-center.x, -center.y, -center.z);
       
       // Update matrices
-      model.scene.updateMatrix();
-      model.scene.updateMatrixWorld(true);
+      modelRef.current.scene.updateMatrix();
+      modelRef.current.scene.updateMatrixWorld(true);
       
       console.log('Model normalized with scale:', scale);
-      console.log('Model centered at position:', model.scene.position);
+      console.log('Model centered at position:', modelRef.current.scene.position);
       
       // Initialize position reference
       positionRef.current = {
@@ -578,14 +582,17 @@ export default function ARScreen() {
       
       // Set initial zoom reference
       zoomRef.current = {
-        scale: model.scene.scale.x,
-        lastDistance: 0
+        scale: modelRef.current.scene.scale.x,
+        lastDistance: 0,
+        initialScale: modelRef.current.scene.scale.x // Preserve the initial scale
       };
       
       // Add the model to the scene
-      scene.add(model.scene);
-      console.log('Model added to scene with scale:', model.scene.scale.x);
-      console.log('Model position in scene:', model.scene.position);
+      if (sceneRef.current && modelRef.current) {
+        sceneRef.current.add(modelRef.current.scene);
+        console.log('Model added to scene with scale:', modelRef.current.scene.scale.x);
+        console.log('Model position in scene:', modelRef.current.scene.position);
+      }
 
       // Extract labels from the model
       initializeLabels();
@@ -604,25 +611,25 @@ export default function ARScreen() {
 
     // Enhance lighting for better material visibility
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.7); // Increased intensity
-    scene.add(ambientLight);
+    sceneRef.current.add(ambientLight);
     
     const pointLight = new THREE.PointLight(0xffffff, 1);
     pointLight.position.set(5, 5, 5);
-    scene.add(pointLight);
+    sceneRef.current.add(pointLight);
     
     // Add a secondary light from another angle for better depth
     const pointLight2 = new THREE.PointLight(0xffffff, 0.8);
     pointLight2.position.set(-5, -2, 2);
-    scene.add(pointLight2);
+    sceneRef.current.add(pointLight2);
 
     // Position camera to view the model from the front center
-    camera.position.z = 5;
-    camera.position.x = 0;
-    camera.position.y = 0;
-    camera.lookAt(0, 0, 0);
+    cameraRef.current.position.z = 5;
+    cameraRef.current.position.x = 0;
+    cameraRef.current.position.y = 0;
+    cameraRef.current.lookAt(0, 0, 0);
 
     // Initial render
-    renderer.render(scene, camera);
+    rendererRef.current.render(sceneRef.current, cameraRef.current);
     gl.endFrameEXP();
   };
 
@@ -665,26 +672,33 @@ export default function ARScreen() {
       <View style={styles.controlsContainer}>
         <TouchableOpacity 
           style={styles.controlButton} 
-          onPress={toggleLabels}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.buttonText}>
-            {showLabels ? 'Hide Labels' : 'Show Labels'}
-          </Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.controlButton} 
           onPress={() => {
-            // Reset model position, rotation and zoom
-            if (model && model.scene) {
-              model.scene.position.set(0, 0, 0);
-              model.scene.rotation.set(0, 0, 0);
-              model.scene.scale.set(zoomRef.current.scale, zoomRef.current.scale, zoomRef.current.scale);
-              model.scene.updateMatrix();
-              model.scene.updateMatrixWorld(true);
+            // Reset model position and rotation
+            if (modelRef.current) {
+              // Use the initial scale that was calculated when the model was loaded
+              const initialScale = zoomRef.current.initialScale;
+              
+              // Reset position to center
+              modelRef.current.scene.position.set(0, 0, 0);
+              // Reset rotation
+              modelRef.current.scene.rotation.set(0, 0, 0);
+              // Reset zoom reference
+              zoomRef.current = {
+                scale: initialScale,
+                lastDistance: 0,
+                initialScale: initialScale // Preserve the initial scale
+              };
+              // Apply the scale to the model
+              modelRef.current.scene.scale.set(initialScale, initialScale, initialScale);
+              
+              // Update the model's matrix
+              modelRef.current.scene.updateMatrix();
+              modelRef.current.scene.updateMatrixWorld(true);
+            } else {
+              console.log('Model not available for reset');
             }
-            // Reset refs
+            
+            // Reset position and rotation references
             positionRef.current = {
               x: 0,
               y: 0
@@ -693,15 +707,28 @@ export default function ARScreen() {
               x: 0,
               y: 0
             };
+            
             // Hide all indicators
             hideAllIndicators();
             setSelectedLabel(null);
+            
             // Request render update
             requestRender();
+            console.log('View reset completed');
           }}
           activeOpacity={0.7}
         >
           <Text style={styles.buttonText}>Reset View</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.controlButton} 
+          onPress={toggleLabels}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonText}>
+            {showLabels ? 'Hide Labels' : 'Show Labels'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
