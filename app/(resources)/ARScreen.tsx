@@ -5,9 +5,10 @@ import { Asset } from 'expo-asset';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import * as THREE from 'three';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
+import axios from 'axios';
 
-// Update path to use assets inside the app directory
-const MODEL = Asset.fromModule(require('../assets/larynx_with_muscles_and_ligaments.glb'));
+// URL to the model - replace with your actual URL
+const MODEL_URL = 'https://placements.bsms.ac.uk/storage/larynx_with_muscles_and_ligaments.glb';
 
 // Type definition for our label data - simplified
 interface Label {
@@ -15,6 +16,14 @@ interface Label {
   name: string;
   color: string;
   worldPosition: THREE.Vector3; // Original position in 3D space
+  meshName?: string; // Name of the mesh this label is associated with
+  indicatorPosition?: THREE.Vector3; // Position for the indicator dot
+}
+
+// Type for visual indicators
+interface VisualIndicator {
+  dot: THREE.Mesh;
+  line: THREE.Line;
 }
 
 export default function ARScreen() {
@@ -37,17 +46,21 @@ export default function ARScreen() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<Renderer | null>(null);
 
+  // Add loading state
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState('Loading 3D model, please wait...');
+
   // Anatomical colors and labels mapping
   const anatomicalParts = [
-    { name: 'Vocalis Muscle', color: '#8B0000' },
-    { name: 'Lateral Cricoarytenoid Muscle', color: '#A52A2A' },
-    { name: 'Posterior Cricoarytenoid Muscle', color: '#CD5C5C' },
-    { name: 'Thyroid Cartilage', color: '#E8E8E8' },
-    { name: 'Cricoid Cartilage', color: '#DCDCDC' },
-    { name: 'Arytenoid Cartilages', color: '#D3D3D3' },
-    { name: 'Cricothyroid Ligament', color: '#FFE4B5' },
-    { name: 'Vocal Ligament', color: '#DEB887' },
-    { name: 'Mucosa', color: '#FFB6C1' },
+    { name: 'Vocalis Muscle', color: '#8B0000', meshName: 'vocalis_muscle', position: new THREE.Vector3(0.5, 0.2, 0.8) },
+    { name: 'Lateral Cricoarytenoid Muscle', color: '#A52A2A', meshName: 'lateral_cricoarytenoid', position: new THREE.Vector3(-0.5, 0.3, 0.7) },
+    { name: 'Posterior Cricoarytenoid Muscle', color: '#CD5C5C', meshName: 'posterior_cricoarytenoid', position: new THREE.Vector3(0, -0.4, 0.6) },
+    { name: 'Thyroid Cartilage', color: '#E8E8E8', meshName: 'thyroid_cartilage', position: new THREE.Vector3(0.7, 0, 0.5) },
+    { name: 'Cricoid Cartilage', color: '#DCDCDC', meshName: 'cricoid_cartilage', position: new THREE.Vector3(-0.7, -0.2, 0.4) },
+    { name: 'Arytenoid Cartilages', color: '#D3D3D3', meshName: 'arytenoid_cartilage', position: new THREE.Vector3(0.3, 0.5, 0.3) },
+    { name: 'Cricothyroid Ligament', color: '#FFE4B5', meshName: 'cricothyroid_ligament', position: new THREE.Vector3(-0.3, 0.4, 0.2) },
+    { name: 'Vocal Ligament', color: '#DEB887', meshName: 'vocal_ligament', position: new THREE.Vector3(0.4, -0.3, 0.1) },
+    { name: 'Mucosa', color: '#FFB6C1', meshName: 'mucosa', position: new THREE.Vector3(-0.4, -0.5, 0) },
   ];
 
   const getAnatomicalColor = (meshName: string, index: number): string => {
@@ -56,12 +69,16 @@ export default function ARScreen() {
     return part ? part.color : '#CCCCCC'; // Default gray if no mapping
   };
 
-  const loadModel = async (): Promise<string | null> => {
+  const loadModel = async (): Promise<ArrayBuffer | null> => {
     try {
-      await MODEL.downloadAsync();
-      return MODEL.uri;
+      // Option 1: Load from URL using axios
+      const response = await axios.get(MODEL_URL, {
+        responseType: 'arraybuffer'
+      });
+      console.log('Model loaded from URL successfully');
+      return response.data;
     } catch (error) {
-      console.error('Error downloading model:', error);
+      console.error('Error loading model:', error);
       return null;
     }
   };
@@ -76,7 +93,10 @@ export default function ARScreen() {
   };
 
   // Function to normalize model size
-  const normalizeModel = (modelScene: THREE.Object3D): void => {
+  const normalizeModel = (modelScene: THREE.Object3D): THREE.Group => {
+    // First reset position to ensure we're working from a clean state
+    modelScene.position.set(0, 0, 0);
+    
     // Calculate bounding box to determine model size
     const box = new THREE.Box3().setFromObject(modelScene);
     const size = box.getSize(new THREE.Vector3());
@@ -89,15 +109,27 @@ export default function ARScreen() {
     // Update zoom reference to match the normalized scale
     zoomRef.current.scale = scale;
     
-    // Center the model
+    // Recalculate bounding box after scaling
+    box.setFromObject(modelScene);
+    
+    // Get center after scaling
     const center = box.getCenter(new THREE.Vector3());
-    modelScene.position.sub(center);
+    
+    // Create a group to hold the model
+    const group = new THREE.Group();
+    
+    // Add the model to the group with an offset to center it
+    group.add(modelScene);
+    modelScene.position.set(-center.x, -center.y, -center.z);
     
     // Update the model's matrix
     modelScene.updateMatrix();
     modelScene.updateMatrixWorld(true);
     
     console.log('Model normalized with scale:', scale);
+    console.log('Model centered at position:', modelScene.position);
+    
+    return group;
   };
 
   // Create pan responder for handling touch gestures
@@ -253,21 +285,124 @@ export default function ARScreen() {
   const labelOpacity = useRef(new Animated.Value(1)).current;
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   
+  // Ref to store visual indicators (dots and lines)
+  const indicatorsRef = useRef<Record<string, VisualIndicator>>({});
+  
   // Window dimensions for positioning
   const windowWidth = Dimensions.get('window').width;
   const windowHeight = Dimensions.get('window').height;
 
-  // Simplified function to extract labels from model
+  // Function to create a visual indicator (dot and line)
+  const createVisualIndicator = (label: Label): VisualIndicator | null => {
+    if (!sceneRef.current || !label.indicatorPosition) {
+      console.log(`Cannot create indicator for ${label.name}: missing scene or position`);
+      return null;
+    }
+    
+    console.log(`Creating indicator for ${label.name} at position:`, label.indicatorPosition);
+    
+    // Create a sphere for the dot indicator with a larger size for better visibility
+    const dotGeometry = new THREE.SphereGeometry(0.08, 16, 16);
+    const dotMaterial = new THREE.MeshBasicMaterial({ 
+      color: label.color,
+      transparent: false,
+      opacity: 1.0
+    });
+    const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+    
+    // Position the dot at a fixed offset from the center for better visibility
+    dot.position.copy(label.indicatorPosition);
+    dot.visible = false; // Initially hidden
+    
+    // Create a line from the indicator to the part
+    const lineGeometry = new THREE.BufferGeometry();
+    // Use a fixed offset for the target position to ensure it's visible
+    const targetPosition = new THREE.Vector3(
+      label.indicatorPosition.x - 0.2,
+      label.indicatorPosition.y - 0.2,
+      label.indicatorPosition.z - 0.2
+    );
+    
+    const points = [
+      label.indicatorPosition,
+      targetPosition
+    ];
+    
+    lineGeometry.setFromPoints(points);
+    const lineMaterial = new THREE.LineBasicMaterial({ 
+      color: label.color,
+      linewidth: 3 // Note: linewidth only works in WebGL 2
+    });
+    const line = new THREE.Line(lineGeometry, lineMaterial);
+    line.visible = false; // Initially hidden
+    
+    // Add to scene
+    sceneRef.current.add(dot);
+    sceneRef.current.add(line);
+    
+    console.log(`Created indicator for ${label.name}`);
+    
+    return { dot, line };
+  };
+
+  // Function to show/hide all indicators
+  const toggleAllIndicators = (visible: boolean): void => {
+    console.log(`${visible ? 'Showing' : 'Hiding'} all indicators`);
+    
+    Object.entries(indicatorsRef.current).forEach(([labelId, indicator]) => {
+      if (indicator.dot) indicator.dot.visible = visible;
+      if (indicator.line) indicator.line.visible = visible;
+      console.log(`Indicator for ${labelId} visibility set to ${visible}`);
+    });
+    
+    // Request render update
+    requestRender();
+  };
+
+  // Simplified function to extract labels from model and create indicators
   const extractLabelsFromModel = (modelScene: THREE.Object3D): void => {
-    // Create a simple label for each anatomical part
-    const extractedLabels = anatomicalParts.map((part, index) => ({
-      id: `label-${index}`,
-      name: part.name,
-      color: part.color,
-      worldPosition: new THREE.Vector3(0, index * 0.5 - 1, 0) // Position labels vertically stacked
-    }));
+    // Create a label for each anatomical part with indicator positions
+    const extractedLabels = anatomicalParts.map((part, index) => {
+      // Find the mesh in the model if possible
+      let targetMesh: THREE.Object3D | null = null;
+      let worldPosition: THREE.Vector3 = new THREE.Vector3();
+      
+      modelScene.traverse((child: THREE.Object3D) => {
+        // Try to find a mesh with a name containing our part name (case insensitive)
+        if (child instanceof THREE.Mesh && 
+            child.name.toLowerCase().includes(part.meshName?.toLowerCase() || '')) {
+          targetMesh = child;
+          
+          // Get the world position of the mesh (center)
+          const boundingBox = new THREE.Box3().setFromObject(child);
+          boundingBox.getCenter(worldPosition);
+        }
+      });
+      
+      // If we couldn't find a specific mesh, use a default position
+      if (!worldPosition.x && !worldPosition.y && !worldPosition.z) {
+        worldPosition = new THREE.Vector3(0, index * 0.5 - 1, 0);
+      }
+      
+      return {
+        id: `label-${index}`,
+        name: part.name,
+        color: part.color,
+        worldPosition: worldPosition,
+        meshName: part.meshName,
+        indicatorPosition: part.position
+      };
+    });
     
     setLabels(extractedLabels);
+    
+    // Create visual indicators for each label
+    extractedLabels.forEach(label => {
+      const indicator = createVisualIndicator(label);
+      if (indicator) {
+        indicatorsRef.current[label.id] = indicator;
+      }
+    });
   };
 
   // Function to toggle labels visibility
@@ -281,6 +416,12 @@ export default function ARScreen() {
       duration: 300,
       useNativeDriver: true
     }).start();
+    
+    // Hide all indicators when labels are hidden
+    if (!newState) {
+      toggleAllIndicators(false);
+      setSelectedLabel(null);
+    }
   };
 
   // Function to request a render update
@@ -319,38 +460,31 @@ export default function ARScreen() {
     console.log('GL context created, renderer initialized');
 
     try {
-      const modelURI = await loadModel();
-      console.log('Model URI received:', modelURI);
+      setLoadingMessage('Downloading model...');
+      const modelData = await loadModel();
+      console.log('Model data received:', modelData ? 'Data available' : 'No data');
       
-      if (!modelURI) {
-        throw new Error('Could not resolve model URI');
+      if (!modelData) {
+        throw new Error('Could not load model data');
       }
 
+      setLoadingMessage('Processing model...');
       const loader = new GLTFLoader();
       
       // For debugging
       loader.setPath('');
       
-      // For Expo managed workflows, this approach works well
-      const response = await fetch(modelURI);
-      const blob = await response.blob();
-      const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as ArrayBuffer);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(blob);
-      });
-      
       // Fix: Assign to the model variable declared at component scope
       model = await new Promise<GLTF>((resolve, reject) => {
         loader.parse(
-          arrayBuffer,
+          modelData,
           '',
           resolve,
           reject
         );
       });
 
+      setLoadingMessage('Applying materials...');
       // Replace all materials with anatomically colored materials based on mesh index
       let meshIndex = 0;
       model.scene.traverse((child: THREE.Object3D) => {
@@ -380,10 +514,35 @@ export default function ARScreen() {
         }
       });
 
-      // Apply normalization to ensure consistent size across models
-      normalizeModel(model.scene);
+      // A simpler approach to center the model
+      // First reset position
+      model.scene.position.set(0, 0, 0);
       
-      // Initialize position reference with the model's centered position
+      // Calculate bounding box
+      const box = new THREE.Box3().setFromObject(model.scene);
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      
+      // Scale model to a reasonable size
+      const scale = 2 / maxDim;
+      model.scene.scale.set(scale, scale, scale);
+      
+      // Update zoom reference
+      zoomRef.current.scale = scale;
+      
+      // Center the model by calculating its center and moving it to origin
+      box.setFromObject(model.scene); // Recalculate after scaling
+      const center = box.getCenter(new THREE.Vector3());
+      model.scene.position.set(-center.x, -center.y, -center.z);
+      
+      // Update matrices
+      model.scene.updateMatrix();
+      model.scene.updateMatrixWorld(true);
+      
+      console.log('Model normalized with scale:', scale);
+      console.log('Model centered at position:', model.scene.position);
+      
+      // Initialize position reference
       positionRef.current = {
         x: 0,
         y: 0
@@ -401,17 +560,23 @@ export default function ARScreen() {
         lastDistance: 0
       };
       
+      // Add the model to the scene
       scene.add(model.scene);
       console.log('Model added to scene with scale:', model.scene.scale.x);
+      console.log('Model position in scene:', model.scene.position);
 
       // Extract labels from the model
       extractLabelsFromModel(model.scene);
+      
+      // Model is loaded and ready
+      setIsLoading(false);
       
     } catch (error) {
       console.error('Error loading model:', error);
       if (error instanceof Error) {
         console.error('Error details:', error.message);
         console.error('Error stack:', error.stack);
+        setLoadingMessage(`Error loading model: ${error.message}`);
       }
     }
 
@@ -428,8 +593,11 @@ export default function ARScreen() {
     pointLight2.position.set(-5, -2, 2);
     scene.add(pointLight2);
 
-    // Increased camera distance to see the properly scaled model
+    // Position camera to view the model from the front center
     camera.position.z = 5;
+    camera.position.x = 0;
+    camera.position.y = 0;
+    camera.lookAt(0, 0, 0);
 
     // Initial render
     renderer.render(scene, camera);
@@ -438,28 +606,56 @@ export default function ARScreen() {
 
   // Function to reset model position, rotation and zoom
   const resetModel = (): void => {
+    console.log("Resetting model...");
+    
     if (model && model.scene) {
-      // Calculate bounding box to determine model size
-      const box = new THREE.Box3().setFromObject(model.scene);
-      
-      // Reset position
-      const center = box.getCenter(new THREE.Vector3());
-      model.scene.position.sub(center);
-      positionRef.current = { x: 0, y: 0 };
-      
-      // Reset rotation
-      model.scene.rotation.x = 0;
-      model.scene.rotation.y = 0;
-      rotationRef.current = { x: 0, y: 0 };
-      
-      // Reset zoom - using the original normalized scale
-      const normalizedScale = zoomRef.current.scale;
-      model.scene.scale.set(normalizedScale, normalizedScale, normalizedScale);
-      
-      // Request render update
-      requestRender();
+      try {
+        // First reset position to origin
+        model.scene.position.set(0, 0, 0);
+        console.log("Reset position to origin");
+        
+        // Calculate bounding box
+        const box = new THREE.Box3().setFromObject(model.scene);
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        console.log("Model size:", size, "maxDim:", maxDim);
+        
+        // Scale model to the original normalized size
+        const scale = 2 / maxDim;
+        model.scene.scale.set(scale, scale, scale);
+        console.log("Set scale to:", scale);
+        
+        // Update zoom reference
+        zoomRef.current.scale = scale;
+        
+        // Center the model by calculating its center and moving it to origin
+        box.setFromObject(model.scene); // Recalculate after scaling
+        const center = box.getCenter(new THREE.Vector3());
+        model.scene.position.set(-center.x, -center.y, -center.z);
+        console.log("Centered model at:", -center.x, -center.y, -center.z);
+        
+        // Reset rotation
+        model.scene.rotation.x = 0;
+        model.scene.rotation.y = 0;
+        console.log("Reset rotation");
+        
+        // Reset refs
+        positionRef.current = { x: 0, y: 0 };
+        rotationRef.current = { x: 0, y: 0 };
+        
+        // Update matrices
+        model.scene.updateMatrix();
+        model.scene.updateMatrixWorld(true);
+        
+        console.log('Model reset to initial position and scale');
+      } catch (error) {
+        console.error("Error resetting model:", error);
+      }
+    } else {
+      console.error("Cannot reset model: model or model.scene is null");
     }
-    // Also clear selected label
+    
+    // Clear selected label
     setSelectedLabel(null);
     
     // Reset all material opacities
@@ -472,35 +668,72 @@ export default function ARScreen() {
       });
     }
     
+    // Hide all indicators
+    toggleAllIndicators(false);
+    
+    // Request render update
     requestRender();
+    
+    console.log("Reset complete");
   };
 
   // Select a label to highlight its corresponding part
   const selectLabel = (labelId: string): void => {
-    setSelectedLabel(labelId === selectedLabel ? null : labelId);
+    console.log(`Selecting label: ${labelId}, previous selection: ${selectedLabel}`);
     
-    // Highlight the corresponding model part
+    // If the same label is clicked again, deselect it
+    const newSelectedLabel = labelId === selectedLabel ? null : labelId;
+    setSelectedLabel(newSelectedLabel);
+    
+    // Hide all indicators first
+    toggleAllIndicators(false);
+    
+    // Highlight the corresponding model part and show its indicator
     if (model && model.scene) {
       const selectedPart = labels.find(l => l.id === labelId);
       
-      model.scene.traverse((child: THREE.Object3D) => {
-        if (child instanceof THREE.Mesh && child.material) {
-          const material = child.material as THREE.MeshPhongMaterial;
-          
-          // Reset all materials to original appearance
-          const originalColor = getAnatomicalColor(child.name, parseInt(child.name.split('_')[1] || '0'));
-          material.opacity = 0.95;
-          
-          // If this part matches the selected label, highlight it
-          if (selectedPart && material.color.getHexString() === selectedPart.color.replace('#', '').toLowerCase()) {
-            material.opacity = 1.0; // Full opacity for selected parts
-          } else if (selectedPart) {
-            material.opacity = 0.5; // Dim other parts
+      if (selectedPart) {
+        console.log(`Found selected part: ${selectedPart.name}, meshName: ${selectedPart.meshName}`);
+        
+        let foundMatchingMesh = false;
+        
+        model.scene.traverse((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh && child.material) {
+            const material = child.material as THREE.MeshPhongMaterial;
+            
+            // Reset all materials to original appearance
+            material.opacity = 0.95;
+            
+            // If this part matches the selected label, highlight it
+            if (selectedPart && 
+                child.name.toLowerCase().includes(selectedPart.meshName?.toLowerCase() || '')) {
+              console.log(`Highlighting mesh: ${child.name}`);
+              material.opacity = 1.0; // Full opacity for selected parts
+              foundMatchingMesh = true;
+            } else if (selectedPart) {
+              material.opacity = 0.5; // Dim other parts
+            }
           }
+        });
+        
+        if (!foundMatchingMesh) {
+          console.log(`Warning: No matching mesh found for ${selectedPart.name}`);
         }
-      });
+      }
+      
+      // Show indicator for the selected label
+      if (newSelectedLabel && indicatorsRef.current[newSelectedLabel]) {
+        const indicator = indicatorsRef.current[newSelectedLabel];
+        console.log(`Showing indicator for ${newSelectedLabel}`);
+        indicator.dot.visible = true;
+        indicator.line.visible = true;
+      } else if (newSelectedLabel) {
+        console.log(`Warning: No indicator found for ${newSelectedLabel}`);
+      }
       
       requestRender();
+    } else {
+      console.error("Cannot select label: model or model.scene is null");
     }
   };
 
@@ -512,6 +745,13 @@ export default function ARScreen() {
       />
       
       <View style={styles.touchHandler} {...panResponder.panHandlers} />
+      
+      {/* Loading overlay */}
+      {isLoading && (
+        <View style={styles.loadingOverlay}>
+          <Text style={styles.loadingText}>{loadingMessage}</Text>
+        </View>
+      )}
       
       {/* Simplified labels panel instead of floating labels */}
       {showLabels && (
@@ -563,35 +803,23 @@ const styles = StyleSheet.create({
   },
   glView: {
     flex: 1,
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
   },
   touchHandler: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'transparent',
+    ...StyleSheet.absoluteFillObject,
   },
-  resetButton: {
-    position: 'absolute',
-    bottom: 20,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#ffffff',
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
-  resetButtonText: {
-    color: '#ffffff',
+  loadingText: {
+    color: 'white',
+    fontSize: 18,
     fontWeight: 'bold',
-    fontSize: 16,
+    textAlign: 'center',
+    padding: 20,
   },
   controlsContainer: {
     position: 'absolute',
