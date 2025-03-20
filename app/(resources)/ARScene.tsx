@@ -164,7 +164,7 @@ export default function ARViewComponent() {
     
     // Calculate scale to fit model in view
     const maxDim = Math.max(size.x, size.y, size.z);
-    const scale = 1.5 / maxDim;
+    const scale = 4.0 / maxDim; // Increased from 2.5 to 4.0 for an even larger model
     
     // Center the model
     gltf.scene.position.x = -center.x * scale;
