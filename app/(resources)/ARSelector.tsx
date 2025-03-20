@@ -2,10 +2,9 @@ import React, { useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, SafeAreaView } from 'react-native';
 import ARViewComponent from './ARScene';
 import ARCameraScene from './ARCameraScene';
-import ARVRScene from './ARVRScene';
 
 export default function ARSelector() {
-  const [viewMode, setViewMode] = useState<'standard' | 'ar' | 'vr'>('vr');
+  const [viewMode, setViewMode] = useState<'standard' | 'ar'>('standard');
 
   return (
     <SafeAreaView style={styles.container}>
@@ -24,23 +23,14 @@ export default function ARSelector() {
         >
           <Text style={styles.buttonText}>AR Style</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.modeButton, viewMode === 'vr' && styles.activeButton]}
-          onPress={() => setViewMode('vr')}
-        >
-          <Text style={styles.buttonText}>VR Style</Text>
-        </TouchableOpacity>
       </View>
       
       {/* Content area - shows the selected view */}
       <View style={styles.contentContainer}>
         {viewMode === 'standard' ? (
           <ARViewComponent />
-        ) : viewMode === 'ar' ? (
-          <ARCameraScene />
         ) : (
-          <ARVRScene />
+          <ARCameraScene />
         )}
       </View>
     </SafeAreaView>

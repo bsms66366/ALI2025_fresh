@@ -1,14 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
 import { useModelCache } from './ModelCacheContext';
-
-// Define model interface
-interface Model {
-  id: string;
-  name: string;
-  url: string;
-  description?: string;
-}
+import { useSharedModel, Model } from './SharedModelContext';
 
 // Props for the component
 interface ARModelSelectorProps {
@@ -19,11 +12,16 @@ interface ARModelSelectorProps {
 export default function ARModelSelector({ onModelSelected, initialModelId }: ARModelSelectorProps) {
   // State for models and active model
   const [models, setModels] = useState<Model[]>([]);
-  const [activeModelId, setActiveModelId] = useState<string | null>(initialModelId || null);
   const [isLoading, setIsLoading] = useState(true);
   
   // Get model cache
   const modelCache = useModelCache();
+  
+  // Get shared model context
+  const { selectedModel, setSelectedModel } = useSharedModel();
+  const [activeModelId, setActiveModelId] = useState<string | null>(
+    selectedModel?.id || initialModelId || null
+  );
 
   // Fetch available models
   useEffect(() => {
@@ -43,26 +41,34 @@ export default function ARModelSelector({ onModelSelected, initialModelId }: ARM
             name: 'Larynx',
             url: 'https://placements.bsms.ac.uk/storage/larynx.glb',
             description: 'Detailed model of the larynx'
-          },
-          /* {
-            id: 'heart',
-            name: 'Heart',
-            url: 'https://placements.bsms.ac.uk/storage/heart.glb',
-            description: 'Detailed model of the heart'
-          } */
+          }
+          // Remove the heart model since it's returning 404
+          // {
+          //   id: 'heart',
+          //   name: 'Heart',
+          //   url: 'https://placements.bsms.ac.uk/storage/heart.glb',
+          //   description: 'Detailed model of the heart'
+          // }
         ];
         
         setModels(availableModels);
         
         // Set initial active model if not already set
-        if (!activeModelId && availableModels.length > 0) {
-          setActiveModelId(availableModels[0].id);
-          onModelSelected(availableModels[0]);
-        } else if (activeModelId) {
-          const selectedModel = availableModels.find(model => model.id === activeModelId);
-          if (selectedModel) {
-            onModelSelected(selectedModel);
+        if (!activeModelId && !selectedModel && availableModels.length > 0) {
+          const initialModel = availableModels[0];
+          setActiveModelId(initialModel.id);
+          setSelectedModel(initialModel);
+          onModelSelected(initialModel);
+        } else if (activeModelId && !selectedModel) {
+          const selectedModelObj = availableModels.find(model => model.id === activeModelId);
+          if (selectedModelObj) {
+            setSelectedModel(selectedModelObj);
+            onModelSelected(selectedModelObj);
           }
+        } else if (selectedModel) {
+          // If we already have a selected model from the shared context, use it
+          setActiveModelId(selectedModel.id);
+          onModelSelected(selectedModel);
         }
       } catch (error) {
         console.error('Error fetching models:', error);
@@ -72,18 +78,24 @@ export default function ARModelSelector({ onModelSelected, initialModelId }: ARM
     };
     
     fetchModels();
-  }, [initialModelId]);
+  }, [initialModelId, selectedModel]);
 
   // Handle model selection
   const handleModelSelect = useCallback((model: Model) => {
     setActiveModelId(model.id);
+    setSelectedModel(model); // Update the shared context
     onModelSelected(model);
     
     // Preload the model data in cache
-    modelCache.getModelData(model.url).catch(error => {
-      console.error('Error preloading model:', error);
-    });
-  }, [onModelSelected, modelCache]);
+    modelCache.getModelData(model.url)
+      .then(() => {
+        console.log(`Successfully preloaded model: ${model.name}`);
+      })
+      .catch(error => {
+        console.error(`Error preloading model ${model.name}:`, error);
+        // Don't block the UI if preloading fails
+      });
+  }, [onModelSelected, modelCache, setSelectedModel]);
 
   return (
     <View style={styles.container}>

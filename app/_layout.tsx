@@ -8,6 +8,7 @@ import 'react-native-reanimated';
 
 import { useTheme } from '@/components/useTheme';
 import { ModelCacheProvider } from './(resources)/ModelCacheContext';
+import { SharedModelProvider } from './(resources)/SharedModelContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -51,20 +52,22 @@ function RootLayoutNav() {
 
   return (
     <ModelCacheProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack screenOptions={{
-          headerShown: true,
-          headerStyle: {
-            backgroundColor: '#000',
-          },
-          headerTintColor: '#fff',
-          headerTitle: '',
-          headerBackTitle: ' ',
-        }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-        </Stack>
-      </ThemeProvider>
+      <SharedModelProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <Stack screenOptions={{
+            headerShown: true,
+            headerStyle: {
+              backgroundColor: '#000',
+            },
+            headerTintColor: '#fff',
+            headerTitle: '',
+            headerBackTitle: ' ',
+          }}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+          </Stack>
+        </ThemeProvider>
+      </SharedModelProvider>
     </ModelCacheProvider>
   );
 }

@@ -50,7 +50,8 @@ export const ModelCacheProvider: React.FC<{ children: ReactNode }> = ({ children
     console.log(`Downloading model from ${url}`);
     try {
       const response = await axios.get(url, {
-        responseType: 'arraybuffer'
+        responseType: 'arraybuffer',
+        timeout: 30000, // 30 second timeout
       });
 
       // Manage cache size before adding new entry
@@ -66,9 +67,26 @@ export const ModelCacheProvider: React.FC<{ children: ReactNode }> = ({ children
       }));
 
       return response.data;
-    } catch (error) {
-      console.error('Error downloading model:', error);
-      throw error;
+    } catch (error: any) {
+      if (error.response) {
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        if (error.response.status === 404) {
+          console.error(`Model not found at URL: ${url} (404 error)`);
+          throw new Error(`Model not found at specified URL (404 error). Please check if the model exists at: ${url}`);
+        } else {
+          console.error(`Server error when downloading model: ${error.response.status}`);
+          throw new Error(`Server error when downloading model: ${error.response.status}`);
+        }
+      } else if (error.request) {
+        // The request was made but no response was received
+        console.error('Network error when downloading model. Please check your internet connection.');
+        throw new Error('Network error when downloading model. Please check your internet connection.');
+      } else {
+        // Something happened in setting up the request that triggered an Error
+        console.error(`Error downloading model: ${error.message}`);
+        throw new Error(`Error downloading model: ${error.message}`);
+      }
     }
   };
 
@@ -155,3 +173,17 @@ export const useModelCache = (): ModelCacheContextType => {
   }
   return context;
 };
+
+// Add a default export component to satisfy Expo Router requirements
+export default function ModelCacheContextRoute() {
+  return (
+    <ModelCacheProvider>
+      <NoDisplay />
+    </ModelCacheProvider>
+  );
+}
+
+// Simple component that doesn't render anything
+function NoDisplay() {
+  return null;
+}
