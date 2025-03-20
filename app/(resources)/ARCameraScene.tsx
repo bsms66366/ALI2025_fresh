@@ -30,6 +30,7 @@ export default function ARCameraScene() {
   const frameId = useRef<number | null>(null);
   const animationMixerRef = useRef<THREE.AnimationMixer | null>(null);
   const animationClockRef = useRef<THREE.Clock | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   // Function to handle model selection
   const handleModelSelected = (model: Model) => {
@@ -68,51 +69,48 @@ export default function ARCameraScene() {
     }
   };
 
-  // Function to load a model
+  // Load the model
   const loadModel = async (url: string) => {
-    if (!glRef.current || !sceneRef.current) {
-      console.error('GL context or scene not initialized');
+    if (!url) {
+      console.error('No model URL provided');
+      setLoadingError('No model URL provided');
       return;
     }
 
-    // Clear existing model from scene
-    if (modelRef.current && sceneRef.current) {
-      sceneRef.current.remove(modelRef.current.scene);
-      modelRef.current = null;
-    }
-
-    // Check if we have a cached parsed model first
-    const cachedModel = modelCache.getParsedModel(url);
-    
-    if (cachedModel) {
-      console.log('Using cached parsed model');
-      modelRef.current = cachedModel;
-      setupModel(cachedModel);
-    } else {
-      // Load the 3D model from remote URL
-      const modelData = await loadModelFromUrl(url);
+    try {
+      setLoadingMessage('Downloading model...');
+      
+      // Use model cache to get the model data
+      const modelData = await modelCache.getModelData(url);
       
       if (!modelData) {
-        throw new Error('Could not load model data');
+        throw new Error('Failed to load model data');
       }
       
       setLoadingMessage('Processing model...');
+      
+      // Create a loader
       const loader = new GLTFLoader();
       
       // Parse the model data
-      modelRef.current = await new Promise<GLTF>((resolve, reject) => {
-        loader.parse(
-          modelData,
-          '', // Ensure this is an empty string, not undefined, to fix the GLTFLoader path issue
-          resolve,
-          reject
-        );
-      });
-      
-      // Store the parsed model in cache
-      modelCache.setParsedModel(url, modelRef.current);
-      
-      setupModel(modelRef.current);
+      loader.parse(
+        modelData,
+        '',
+        (gltf) => {
+          console.log('Model loaded from cache or URL successfully');
+          modelRef.current = gltf;
+          setupModel(gltf);
+        },
+        (error) => {
+          console.error('Error parsing model:', error);
+          setLoadingError(`Error parsing model: ${error.message}`);
+          setLoadingMessage(null);
+        }
+      );
+    } catch (error: any) {
+      console.error('Error loading model:', error);
+      setLoadingError(`Error loading model: ${error.message}`);
+      setLoadingMessage(null);
     }
   };
 
@@ -125,37 +123,34 @@ export default function ARCameraScene() {
     // Add the model to the scene
     sceneRef.current.add(gltf.scene);
     
-    // Apply vertex colors if available and ensure materials are properly set up
+    // Apply custom materials to each mesh to avoid texture loading issues
+    let meshIndex = 0;
     gltf.scene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
         
-        // Make sure materials are properly applied
-        if (mesh.material) {
-          // If it's an array of materials
-          if (Array.isArray(mesh.material)) {
-            mesh.material.forEach(material => {
-              // Enable vertex colors if they exist
-              if (mesh.geometry.attributes.color) {
-                material.vertexColors = true;
-              }
-              
-              // Ensure material settings are optimized for display
-              material.needsUpdate = true;
-              material.side = THREE.DoubleSide; // Render both sides
-            });
-          } else {
-            // Single material
-            // Enable vertex colors if they exist
-            if (mesh.geometry.attributes.color) {
-              mesh.material.vertexColors = true;
-            }
-            
-            // Ensure material settings are optimized for display
-            mesh.material.needsUpdate = true;
-            mesh.material.side = THREE.DoubleSide; // Render both sides
-          }
+        // Create a simple phong material with a default color
+        // This avoids texture loading issues
+        const colorHex = getMeshColor(mesh.name, meshIndex);
+        const material = new THREE.MeshPhongMaterial({
+          color: new THREE.Color(colorHex),
+          specular: 0x333333,
+          shininess: 30,
+          flatShading: false,
+          transparent: true,
+          opacity: 0.95,
+        });
+        
+        // Apply the material to the mesh
+        mesh.material = material;
+        
+        // Enable vertex colors if they exist
+        if (mesh.geometry.attributes.color) {
+          mesh.material.vertexColors = true;
         }
+        
+        console.log(`Applied ${colorHex} to mesh: ${mesh.name}`);
+        meshIndex++;
       }
     });
     
@@ -185,22 +180,76 @@ export default function ARCameraScene() {
     
     // Setup animation if available
     if (gltf.animations && gltf.animations.length > 0) {
-      const mixer = new THREE.AnimationMixer(gltf.scene);
-      const action = mixer.clipAction(gltf.animations[0]);
-      action.play();
+      console.log(`Model has ${gltf.animations.length} animations`);
       
-      // Store the mixer in a ref for animation updates
+      // Create a new animation mixer
+      const mixer = new THREE.AnimationMixer(gltf.scene);
       animationMixerRef.current = mixer;
       
+      // Initialize the clock if needed
       if (!animationClockRef.current) {
         animationClockRef.current = new THREE.Clock();
-      } else {
-        animationClockRef.current.start();
       }
+      animationClockRef.current.start();
+      
+      // Play all animations
+      gltf.animations.forEach((clip, index) => {
+        console.log(`Playing animation: ${clip.name || `Animation ${index}`}, duration: ${clip.duration}s`);
+        const action = mixer.clipAction(clip);
+        action.setLoop(THREE.LoopRepeat, Infinity); // Loop the animation infinitely
+        action.clampWhenFinished = false; // Don't clamp at the end
+        action.play();
+      });
+      
+      // Start the animation loop
+      startAnimationLoop();
+    } else {
+      console.log('Model has no animations');
     }
     
     setModelLoaded(true);
     setLoadingMessage(null);
+  };
+
+  // Function to start the animation loop
+  const startAnimationLoop = () => {
+    if (!animationFrameRef.current) {
+      const animate = () => {
+        if (animationMixerRef.current && animationClockRef.current) {
+          const delta = animationClockRef.current.getDelta();
+          animationMixerRef.current.update(delta);
+        }
+        
+        // Render the scene
+        requestRender();
+        
+        // Continue the animation loop
+        animationFrameRef.current = requestAnimationFrame(animate);
+      };
+      
+      // Start the animation loop
+      animationFrameRef.current = requestAnimationFrame(animate);
+      console.log('Animation loop started');
+    }
+  };
+
+  // Helper function to get mesh colors
+  const getMeshColor = (meshName: string, index: number): string => {
+    // Define some anatomical colors
+    const anatomicalColors = [
+      '#8B0000', // Dark red
+      '#A52A2A', // Brown
+      '#CD5C5C', // Indian red
+      '#E8E8E8', // Light gray
+      '#DCDCDC', // Gainsboro
+      '#D3D3D3', // Light gray
+      '#FFE4B5', // Moccasin
+      '#DEB887', // Burlywood
+      '#FFB6C1', // Light pink
+    ];
+    
+    // Return a color based on the index, cycling through the array
+    return anatomicalColors[index % anatomicalColors.length];
   };
 
   // This function handles the 3D rendering
@@ -262,6 +311,12 @@ export default function ARCameraScene() {
     render();
   };
 
+  const requestRender = () => {
+    if (rendererRef.current && sceneRef.current && cameraRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
+  };
+
   // Effect to initialize with the shared model if available
   useEffect(() => {
     if (selectedModel && !currentModel) {
@@ -279,9 +334,25 @@ export default function ARCameraScene() {
     }
   }, [currentModel?.id]); // Only re-run if the model ID changes
 
-  // Cleanup on unmount
+  // Clean up resources when component unmounts
   useEffect(() => {
     return () => {
+      // Stop animation loop
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      
+      // Clean up animation mixer
+      if (animationMixerRef.current) {
+        animationMixerRef.current = null;
+      }
+      
+      // Clean up animation clock
+      if (animationClockRef.current) {
+        animationClockRef.current = null;
+      }
+      
       if (frameId.current) {
         cancelAnimationFrame(frameId.current);
       }
