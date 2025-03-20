@@ -203,12 +203,18 @@ export default function ARViewComponent() {
         action.clampWhenFinished = false; // Don't clamp at the end
         action.play();
       });
-      
-      // Start the animation loop
-      startAnimationLoop();
     } else {
-      console.log('Model has no animations');
+      console.log('Model has no animations, will use manual rotation');
+      
+      // Initialize the clock for the animation loop if it doesn't exist
+      if (!animationClockRef.current) {
+        animationClockRef.current = new THREE.Clock();
+      }
+      animationClockRef.current.start();
     }
+    
+    // Start the animation loop regardless of whether the model has animations
+    startAnimationLoop();
     
     setModelLoaded(true);
     setLoadingMessage(null);
@@ -221,6 +227,12 @@ export default function ARViewComponent() {
         if (animationMixerRef.current && animationClockRef.current) {
           const delta = animationClockRef.current.getDelta();
           animationMixerRef.current.update(delta);
+        }
+        
+        // Add manual rotation to the model if it has no animations
+        if (modelRef.current && modelRef.current.scene) {
+          // Rotate the model slowly around the Y axis
+          modelRef.current.scene.rotation.y += 0.005;
         }
         
         // Render the scene
