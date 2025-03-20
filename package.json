@@ -41,6 +41,7 @@
     "react-native-vision-camera": "^3.9.1",
     "react-native-web": "~0.19.13",
     "react-native-webview": "13.12.5",
+    "three": "^0.166.1",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
