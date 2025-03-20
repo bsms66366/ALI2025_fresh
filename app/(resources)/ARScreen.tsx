@@ -6,6 +6,7 @@ import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader';
 import * as THREE from 'three';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
+import { useModelCache } from './ModelCacheContext';
 
 // Type definition for our label data - simplified
 interface Label {
@@ -98,12 +99,15 @@ export default function ARScreen() {
       const activeModel = models[activeModelIndex];
       console.log(`Loading model: ${activeModel.name} from ${activeModel.url}`);
       
-      // Load from URL using axios
-      const response = await axios.get(activeModel.url, {
-        responseType: 'arraybuffer'
-      });
-      console.log('Model loaded from URL successfully');
-      return response.data;
+      // Use model cache instead of direct axios call
+      try {
+        const modelData = await modelCache.getModelData(activeModel.url);
+        console.log('Model loaded from cache or URL successfully');
+        return modelData;
+      } catch (error) {
+        console.error('Error loading model from cache:', error);
+        return null;
+      }
     } catch (error) {
       console.error('Error loading model:', error);
       return null;
@@ -521,7 +525,7 @@ export default function ARScreen() {
       modelRef.current = await new Promise<GLTF>((resolve, reject) => {
         loader.parse(
           modelData,
-          '',
+          '', // Ensure this is an empty string, not undefined
           resolve,
           reject
         );
@@ -766,6 +770,8 @@ export default function ARScreen() {
 
   // Function to load and display the model
   const loadAndDisplayModel = async () => {
+    if (models.length === 0) return;
+    
     setIsLoading(true);
     setLoadingMessage('Loading 3D model, please wait...');
     
@@ -813,51 +819,87 @@ export default function ARScreen() {
     });
     indicatorsRef.current = {};
     
-    // Load the model
-    const modelData = await loadModel();
-    if (!modelData) {
-      setLoadingMessage('Failed to load model. Please try again.');
-      return;
-    }
+    // Get the current model URL
+    const activeModel = models[activeModelIndex];
     
-    // Parse the model with GLTFLoader
-    const loader = new GLTFLoader();
-    loader.parse(
-      modelData,
-      '',
-      (gltf) => {
-        console.log('Model parsed successfully');
+    // Check if we have a cached parsed model first
+    const cachedModel = modelCache.getParsedModel(activeModel.url);
+    
+    if (cachedModel) {
+      console.log('Using cached parsed model');
+      modelRef.current = cachedModel;
+      
+      // Normalize and center the model
+      const normalizedModel = normalizeModel(cachedModel.scene);
+      
+      // Add the model to the scene
+      if (sceneRef.current) {
+        sceneRef.current.add(normalizedModel);
         
-        // Store the model reference
-        modelRef.current = gltf;
+        // Apply colors to the model parts
+        applyColorsToModel(normalizedModel);
         
-        // Normalize and center the model
-        const normalizedModel = normalizeModel(gltf.scene);
+        // Initialize labels for this model
+        initializeLabels();
         
-        // Add the model to the scene
-        if (sceneRef.current) {
-          sceneRef.current.add(normalizedModel);
-          
-          // Apply colors to the model parts
-          applyColorsToModel(normalizedModel);
-          
-          // Initialize labels for this model
-          initializeLabels();
-          
-          // Hide loading indicator
-          setIsLoading(false);
-          
-          // Request a render update
-          requestRender();
-          
-          console.log('New model added to scene:', models[activeModelIndex].name);
-        }
-      },
-      (error) => {
-        console.error('Error parsing model:', error);
-        setLoadingMessage('Error loading model. Please try again.');
+        // Hide loading indicator
+        setIsLoading(false);
+        
+        // Request a render update
+        requestRender();
+        
+        console.log('Cached model added to scene:', activeModel.name);
       }
-    );
+    } else {
+      // Load the model
+      const modelData = await loadModel();
+      if (!modelData) {
+        setLoadingMessage('Failed to load model. Please try again.');
+        return;
+      }
+      
+      // Parse the model with GLTFLoader
+      const loader = new GLTFLoader();
+      loader.parse(
+        modelData,
+        '', // Ensure this is an empty string, not undefined
+        (gltf) => {
+          console.log('Model parsed successfully');
+          
+          // Store the model reference
+          modelRef.current = gltf;
+          
+          // Store the parsed model in cache
+          modelCache.setParsedModel(activeModel.url, gltf);
+          
+          // Normalize and center the model
+          const normalizedModel = normalizeModel(gltf.scene);
+          
+          // Add the model to the scene
+          if (sceneRef.current) {
+            sceneRef.current.add(normalizedModel);
+            
+            // Apply colors to the model parts
+            applyColorsToModel(normalizedModel);
+            
+            // Initialize labels for this model
+            initializeLabels();
+            
+            // Hide loading indicator
+            setIsLoading(false);
+            
+            // Request a render update
+            requestRender();
+            
+            console.log('New model added to scene:', activeModel.name);
+          }
+        },
+        (error) => {
+          console.error('Error parsing model:', error);
+          setLoadingMessage('Error loading model. Please try again.');
+        }
+      );
+    }
   };
 
   // Function to reset model transform (position, rotation, scale)
@@ -914,6 +956,9 @@ export default function ARScreen() {
       }
     };
   }, []);
+
+  // Get model cache
+  const modelCache = useModelCache();
 
   return (
     <View style={styles.container} {...panResponder.panHandlers}>

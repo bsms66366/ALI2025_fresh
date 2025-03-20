@@ -1,11 +1,11 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import ARViewComponent from './(resources)/ARScene';
+import ARSelector from './(resources)/ARSelector';
 
 export default function ARScreen() {
   return (
     <View style={styles.container}>
-      <ARViewComponent />
+      <ARSelector />
     </View>
   );
 }
