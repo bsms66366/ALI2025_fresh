@@ -39,7 +39,7 @@ export default function ARModelSelector({ onModelSelected, initialModelId }: ARM
           {
             id: 'larynx',
             name: 'Larynx',
-            url: 'https://placements.bsms.ac.uk/storage/larynx.glb',
+            url: 'https://placements.bsms.ac.uk/storage/larynx_with_muscles_and_ligaments.glb',
             description: 'Detailed model of the larynx'
           }
           // Remove the heart model since it's returning 404
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   activeModelButton: {
-    backgroundColor: 'rgba(0, 120, 255, 0.8)',
+    backgroundColor: '#bcba40',
     borderColor: 'white',
   },
   modelButtonText: {
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     color: 'white',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0)',
     paddingHorizontal: 15,
     paddingVertical: 8,
     borderRadius: 15,

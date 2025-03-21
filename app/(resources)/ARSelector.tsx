@@ -40,23 +40,23 @@ export default function ARSelector() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#2c3e50',
+    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
     padding: 10,
-    backgroundColor: '#34495e',
+    backgroundColor: '#2F2F2F',
   },
   modeButton: {
     paddingVertical: 10,
     paddingHorizontal: 15,
     borderRadius: 8,
-    backgroundColor: '#3498db',
+    backgroundColor: '#bcba40',
   },
   activeButton: {
-    backgroundColor: '#2980b9',
+    backgroundColor: '#bcba40',
     borderWidth: 2,
     borderColor: '#fff',
   },
